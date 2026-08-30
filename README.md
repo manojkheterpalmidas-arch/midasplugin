@@ -70,3 +70,7 @@ a plugin depends on; where something was never confirmed against a live model it
 is marked **unverified**, and should stay marked.
 
 Not affiliated with or endorsed by MIDAS IT.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, fork it, ship plugins with it.

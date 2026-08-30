@@ -130,7 +130,15 @@ Body is the same id-keyed shape as a read:
 fewer elements leaves the old high-numbered ones behind. To replace a model,
 `DELETE` first, in dependency order: `GRUP`, `ELEM`, `NODE`.
 
-`DELETE /db/SECT` empties the whole table.
+`DELETE /db/SECT` empties the whole table. `DELETE /db/<TABLE>/<key>` removes a
+**single row** — but `DELETE /db/<TABLE>/key/<n>` is a 404, so the key goes
+straight on the path with no `key` segment.
+
+**The id you send is not always the id you get.** `Assign` at an **existing**
+key overwrites that row. At a **non-existent** key MIDAS **ignores the number
+and appends at the next free slot**. A plugin that writes id 900 into an empty
+table and then reports "written as 900" is guessing — read the table back if the
+id matters downstream.
 
 **One bad entry rejects the whole batch.** When probing or when a failure needs
 localising, post entries individually.
@@ -138,6 +146,17 @@ localising, post entries individually.
 Reuse ids by name where the plugin may be run twice: read the existing table,
 map `NAME → id`, and keep the id so a second run refreshes the same records
 instead of stacking duplicates beside them.
+
+**Re-read the table immediately before writing — never trust the last Read.**
+A plugin that writes from a model snapshot taken minutes earlier will skip
+creating a record the snapshot still lists but the user has since deleted, and
+the dependent write then fails with something unrelated-sounding
+("Vehicle has not been selected."). This surfaces as an *intermittent* failure
+that no one can reproduce on demand, because it depends on what the user did in
+CIVIL NX between the two clicks.
+
+Names and descriptions have **length caps that reject the write** — see
+`write-shapes.md`, "Name and description length caps".
 
 ## Images — `POST /view/CAPTURE`
 

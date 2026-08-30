@@ -109,7 +109,7 @@ Load these as needed; do not read them all up front.
 |---|---|
 | `references/mapi.md` | Connection, error semantics, `/db/` reads, `PUT` writes, `/view/CAPTURE`, the exact failure messages and what each means |
 | `references/result-tables.md` | `POST /post/TABLE` — the Argument shape, table tokens, load-case series suffixes, and the envelope-addressing trap that returns silence |
-| `references/write-shapes.md` | Verified payloads: NODE, ELEM, MATL, SECT, THIK, GRUP, and the field-name traps |
+| `references/write-shapes.md` | Verified payloads: NODE, ELEM, MATL, SECT, THIK, GRUP, tendons, moving load (MVHL/MVLDBS), the field-name traps and the name/description length caps |
 | `references/host.md` | The plugin host contract: query string, window messages, manifest, packaging, WebView2 quirks |
 | `references/ui.md` | Layout and theming conventions that make a plugin look native beside MIDAS's own, plus moaui component notes for patching shipped bundles |
 | `references/testing.md` | The mock + Node harness pattern, and how to verify offline |

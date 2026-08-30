@@ -123,3 +123,24 @@ map** (esbuild or webpack). Patching one is legitimate and works, with two rules
 
 Keep the patch script, not just the patched file — the developer's next build
 overwrites everything.
+
+### Verifying a patch without CIVIL NX
+
+**A React-based plugin's `#root` never mounts outside the MIDAS host — an empty
+page is not a patch failure.** Serving the extracted folder as a static site
+leaves `#root` empty in the *unpatched* build too, so the blank panel proves
+nothing either way and has been misread as a broken patch more than once.
+
+What does work, with the folder served over HTTP:
+
+- `node --check` on the bundle — catches the malformed injection.
+- Expose the patched helpers on `globalThis` (`globalThis.__myPatch = {...}`)
+  and call them from the page console. They are reachable even though the app
+  never mounts, so the new logic can be unit-tested against real inputs.
+- `eval` the injected helper block directly in node for bulk cases — a
+  3000-row stress run over a naming fitter takes seconds and proves uniqueness
+  and length compliance before the plugin ever opens.
+
+Discover the bundle's own running counters by shape and reuse them rather than
+introducing new ones, so anything the patch renames stays unique against records
+the unpatched code also writes.

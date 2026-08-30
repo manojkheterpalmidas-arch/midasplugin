@@ -143,6 +143,53 @@ probe it. See `probing.md`.
 - `TDPL` keys: `LCNAME / GROUP_NAME / TENDON_NAME / TYPE / ORDER / BEGIN / END /
   GROUTING`.
 
+## Moving load — `/db/MVHL` (vehicles) and `/db/MVLDBS` (moving load cases)
+
+Probed against a live model while fixing a CS 454 plugin. Two of these are
+accepted-but-meaningless writes, which is the worst class: nothing reports a
+problem and the model is wrong.
+
+**`PUT /db/MVHL` — vehicles**
+
+- `VEHICLE_LOAD_NUM` must be **1** for a standard vehicular load. `0` gives
+  `{"error":{"message":"Wrong Field"}}`; `2` gives *"Different type of Vehicle
+  data has been entered."* There is no field-dropping workaround.
+- Single vs convoy lives on the **vehicle**, as `VEH_BS.LM1_CASE` (0 single,
+  1 convoy) — **not** on the load case. Omit it and the user's choice is
+  silently ignored.
+- A **special vehicle is a different shape**, not a variant of a standard one:
+  `STANDARD_CODE:"BS BD 86/11"`, `VEHICLE_TYPE_NAME:"SV 80"`,
+  `VEH_BS.DIST_FRONT_TO_REAR_VEHICLE`, and **no** `LM1_*` fields. Cloning an ALL
+  MODEL 1 vehicle and renaming it is rejected.
+- ALL model 2 is `VEHICLE_TYPE_NAME:"ALL MODEL 2(UDL+KEL)"`.
+- ⚠ An ALL MODEL 1 vehicle with `SEL_VEHICLE:""` is **accepted** — and is a
+  live-load-free vehicle. MIDAS never complains, so a plugin can write a
+  completely meaningless load and report success.
+
+**`PUT /db/MVLDBS` — moving load cases**
+
+`bAUTOLIVELOADCOMB` is **decided by what the case names**, not free:
+
+| flag | standard veh | special veh | result |
+|---|---|---|---|
+| off | yes | — | accepted |
+| off | — | yes | accepted |
+| off | yes | yes | rejected — *"When Auto Live Load Combination option is toggled off, only one type of Load Model must be selected."* |
+| on | yes | yes | accepted |
+| on | yes | — | rejected — *"Special Load Vehicle has not been defined."* |
+
+- ⚠ A `SPECIAL_VIHICLE_NAME` naming a vehicle **not present in MVHL is accepted
+  and silently cleared** (note MIDAS's spelling of the key). Test this rule only
+  with the SV actually present, or the readback misleads you.
+- `DGNCOMBFACTORTYPE` is **mandatory in every payload** — omitting it gives
+  "Wrong Field" — but dormant when the flag is off: MIDAS stores whatever you
+  send, `SERVICEABIL` included, and greys the field out in the dialog. So two
+  cases differing *only* by `DGNCOMBFACTORTYPE` with the flag off are duplicates.
+- The error wording distinguishes the two vehicle slots. An unresolvable
+  `LCDATA_ALLMODE.VEHICLE_NAME` gives **"Standard Load Vehicle has not been
+  defined"** when `bAUTOLIVELOADCOMB` is true, and **"Vehicle has not been
+  selected."** when it is false.
+
 ## Name and description length caps
 
 Caps differ per table and are enforced silently in some UIs and hard in others.
@@ -150,3 +197,29 @@ Two measured: material `NAME` 16 characters; load combination name **20** and
 description **60**. A generated-name scheme that overruns these will be rejected
 or truncated at commit — size the scheme to the cap, and leave room for any
 prefix MIDAS adds itself.
+
+The same 20/60 pair applies to **load case and vehicle names**. One plugin's
+error wording is quotable at the user: `"Some names exceed the maximum length
+(20)"`.
+
+**Budget 17, not 20**, for anything the user may then Commit — the Commit prefix
+takes up to 3 characters (`PP_`).
+
+**Test the longest name the generator can produce, not the default.** A stock
+scheme that fits tells you nothing: one plugin's defaults sat *exactly* on both
+caps — a 20-character name and a 60-character description — and worked until a
+user ticked a second limit state, which appended `-ULS`/`-SLS` to the name and
+`, ultimate limit state` to the description and pushed both over. Every optional
+suffix is a separate way to overrun.
+
+When a name is over budget, **merge separators before truncating a token**:
+
+```
+ULS1-ALL1s-W2-Adv   →   ULS1-ALL1sW2Adv      (hyphens merged, all tokens intact)
+```
+
+Never truncate an identifying field. Truncating `V128` to `V12` silently names a
+*different* variant; truncating `ULS1` to `ULS` loses the combination number.
+Both produce a model that looks right and is wrong. Drop a sequence counter
+first — `family+model+wind+variant` is usually already unique — and emit a
+uniqueness suffix only where two rows would actually collide.

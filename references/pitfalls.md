@@ -26,6 +26,24 @@ Every line here cost someone real time. Read before shipping.
       the order of hundreds per model.
 - [ ] `PUT` is known to **upsert, not replace**; a rebuild deletes GRUP, ELEM,
       NODE first if that is the intent.
+- [ ] The table is **re-read immediately before writing**, not written from a
+      Read taken minutes earlier. A stale snapshot skips a record the user has
+      since deleted and fails later with unrelated wording — intermittently, so
+      it never reproduces on demand.
+- [ ] Ids are **read back** where they matter. `Assign` at a non-existent key
+      ignores the number and appends at the next free slot.
+- [ ] Single-row delete is `DELETE /db/<TABLE>/<key>` — `/key/<n>` is a 404.
+- [ ] Generated names are tested at their **longest** form, not the default —
+      every optional suffix is a way to overrun the 20/60 caps. Budget 17 if the
+      user can Commit.
+- [ ] Over-budget names **merge separators before truncating**, and never
+      truncate an identifying token (`V128`→`V12` names a different variant).
+- [ ] Moving load: `VEHICLE_LOAD_NUM` is 1, `VEH_BS.LM1_CASE` carries
+      single/convoy, and a special vehicle is written as its own shape — not a
+      renamed clone.
+- [ ] Moving load: an empty `SEL_VEHICLE` and a `SPECIAL_VIHICLE_NAME` that
+      names no existing vehicle are both **accepted silently**. Validate before
+      sending; the readback will not tell you.
 - [ ] Table `HEAD` columns are found **by name** — `No.`/`Node`/`Elem` differ per
       table.
 - [ ] Node result tokens carry the coordinate suffix: `REACTIONG`,
@@ -62,6 +80,9 @@ Every line here cost someone real time. Read before shipping.
 
 ## Packaging
 
+- [ ] A patched bundle was verified by `node --check` plus calling its injected
+      helpers from the console — **not** by looking at the page. `#root` never
+      mounts outside the host, patched or not.
 - [ ] Built with `pack.ps1`, **not `Compress-Archive`** (backslash separators).
 - [ ] `verify-zip.ps1` run: every entry matches the source hash, no dev files
       leaked.

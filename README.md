@@ -34,7 +34,7 @@ assets/
 Clone into your skills directory:
 
 ```bash
-git clone https://github.com/<you>/midasplugin ~/.claude/skills/midasplugin
+git clone https://github.com/manojkheterpalmidas-arch/midasplugin ~/.claude/skills/midasplugin
 ```
 
 Then ask Claude to build a CIVIL NX plugin, or invoke it by name.

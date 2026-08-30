@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MIDAS CIVIL NX plugin template">
+  <title>Plugin Template</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main class="shell">
+
+  <!-- The whole header is the drag surface. app.js posts REQ_WND_MOVE from a
+       mousedown handler on it, ignoring clicks that land on a control. -->
+  <header class="app-head" title="Drag this bar to move the plugin window">
+    <div class="brand">
+      <img src="./icon.svg" alt="" class="brand-icon">
+      <div>
+        <h1>Plugin Template</h1>
+        <p>MIDAS CIVIL NX &middot; v1.0.0</p>
+      </div>
+    </div>
+    <div class="head-actions">
+      <!-- State the read/write claim, and word it exactly. This is backed by the
+           POST whitelist in js/mapi.js — keep the two in step. -->
+      <span class="claim" title="Reads /db/ tables with GET. Posts only to /post/TABLE and /view/CAPTURE, neither of which changes the model. No PUT, no DELETE, nothing written to disk.">
+        &#128274; Non-mutating
+      </span>
+      <span id="conn-badge" class="badge neutral">Not connected</span>
+      <button id="btn-theme" class="btn ghost" type="button">Dark</button>
+      <button id="btn-close" class="btn ghost" type="button" title="Close plugin">Close</button>
+    </div>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <label for="in-base">Base URL</label>
+      <input id="in-base" type="text" readonly
+             title="Supplied by the host as ?redirectTo=. It always wins over a remembered value.">
+      <label for="in-key">MAPI key</label>
+      <input id="in-key" type="text" placeholder="paste a key when running outside CIVIL NX">
+      <button id="btn-connect" class="btn" type="button">Connect</button>
+    </div>
+    <p class="hint">
+      CIVIL NX must be open. The key is checked for a live session, not just
+      validity — a key keeps verifying after the program closes.
+    </p>
+  </section>
+
+  <section class="panel">
+    <div class="run-bar">
+      <span class="run-lead">Read the open model and summarise what it contains.</span>
+      <button id="btn-run" class="btn primary" type="button" disabled>Read model</button>
+    </div>
+    <div id="progress" hidden>
+      <p id="progress-line" class="progress-line">Idle</p>
+      <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+    </div>
+  </section>
+
+  <section id="error" class="panel error" hidden>
+    <p id="error-message" class="error-message"></p>
+    <p id="error-hint" class="error-hint" hidden></p>
+  </section>
+
+  <section id="results" class="panel" hidden>
+    <h2>Model contents</h2>
+    <p id="extents" class="hint"></p>
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr><th>Table</th><th class="num">Records</th><th>Provenance</th></tr>
+        </thead>
+        <tbody id="summary-body"></tbody>
+      </table>
+    </div>
+    <p class="hint">
+      &ldquo;not read&rdquo; means the plugin deduced there was nothing to read,
+      and says why. It is a weaker claim than &ldquo;not defined&rdquo;.
+    </p>
+  </section>
+
+</main>
+
+<script src="./js/theme.js"></script>
+<script src="./js/mapi.js"></script>
+<script src="./js/model.js"></script>
+<script src="./js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "midas-plugin-template",
+  "version": "1.0.0",
+  "description": "MIDAS CIVIL NX plugin template",
+  "private": true,
+  "//": "type:commonjs is deliberate and load-bearing. If any PARENT folder's package.json says type:module, Node loads these plain scripts as ESM — module.exports never fires and every require() in the test harness returns an empty namespace. The browser loads them as classic scripts either way.",
+  "type": "commonjs",
+  "scripts": {
+    "mock": "node mock-midas/server.js",
+    "test": "node test/run.js"
+  }
+}

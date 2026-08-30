@@ -1,0 +1,15 @@
+{
+  "short_name": "PluginTemplate",
+  "name": "Plugin Template",
+  "version": "1.0.0",
+  "description": "Starting point for a MIDAS CIVIL NX plugin. Replace this description with one sentence describing what the plugin does.",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#eef0f4",
+  "width": 1280,
+  "height": 760
+}

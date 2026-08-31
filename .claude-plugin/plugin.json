@@ -1,0 +1,21 @@
+{
+  "name": "midasplugin",
+  "displayName": "MIDAS CIVIL NX Plugin Builder",
+  "version": "1.1.0",
+  "description": "Build, test and package plugins for MIDAS CIVIL NX: the MAPI client, the plugin-host contract, verified request and response shapes, an offline mock, and the zip rules the host accepts.",
+  "author": {
+    "name": "Manoj Kheterpal",
+    "url": "https://github.com/manojkheterpalmidas-arch"
+  },
+  "homepage": "https://github.com/manojkheterpalmidas-arch/midasplugin",
+  "repository": "https://github.com/manojkheterpalmidas-arch/midasplugin",
+  "license": "MIT",
+  "keywords": [
+    "midas",
+    "civil-nx",
+    "bridge",
+    "structural-engineering",
+    "mapi",
+    "plugin"
+  ]
+}

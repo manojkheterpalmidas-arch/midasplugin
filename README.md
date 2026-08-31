@@ -32,13 +32,47 @@ assets/
 
 ## Install
 
-Clone into your skills directory:
+**Recommended — install as a plugin.** This is the only method that can be
+updated in place, so you get corrections as they land.
+
+```bash
+claude plugin marketplace add manojkheterpalmidas-arch/midasplugin
+claude plugin install midasplugin@midas-plugins
+```
+
+Or from inside Claude Code, `/plugin marketplace add manojkheterpalmidas-arch/midasplugin`
+then `/plugin install midasplugin@midas-plugins`.
+
+**Alternative — clone into your skills directory.** Simpler, but it is a
+snapshot: nothing will tell you when it changes, and you update it by hand.
 
 ```bash
 git clone https://github.com/manojkheterpalmidas-arch/midasplugin ~/.claude/skills/midasplugin
 ```
 
-Then ask Claude to build a CIVIL NX plugin, or invoke it by name.
+Either way, then ask Claude to build a CIVIL NX plugin, or invoke the skill by
+name.
+
+## Update
+
+The skill is corrected whenever a live session turns up something new, so it is
+worth pulling occasionally. **Claude does not fetch this repo on its own** — an
+installed copy stays exactly as it was until you update it.
+
+If you installed it as a plugin:
+
+```bash
+claude plugin update midasplugin@midas-plugins
+```
+
+If you cloned it into your skills directory:
+
+```bash
+git -C ~/.claude/skills/midasplugin pull
+```
+
+**Start a new Claude session afterwards.** A session already running built its
+skill list at startup and will not reliably notice the change.
 
 The template runs on its own too, with no Claude involved:
 

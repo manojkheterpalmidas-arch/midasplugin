@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "//": "One process serves both the mock API and the plugin's own files, so the ports can never drift apart. Open http://localhost:8772/index.html?mapiKey=mock-key&redirectTo=http://localhost:8772/civil",
+  "configurations": [
+    {
+      "name": "plugin-mock",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["mock-midas/server.js"],
+      "port": 8772
+    }
+  ]
+}

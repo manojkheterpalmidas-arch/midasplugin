@@ -190,6 +190,59 @@ problem and the model is wrong.
   defined"** when `bAUTOLIVELOADCOMB` is true, and **"Vehicle has not been
   selected."** when it is false.
 
+## Load combinations — `/db/LCOM-GEN`
+
+```json
+{"Assign":{"116":{
+  "NAME": "~TMP01", "ACTIVE": "ACTIVE", "bCB": false, "iTYPE": 0,
+  "DESC": "temporary",
+  "vCOMB": [{ "ANAL": "CS", "LCNAME": "Dead Load", "FACTOR": 1 }]
+}}}
+```
+
+`iTYPE` is `0` Add, `1` Envelope, `2` ABS, `3` SRSS. `ANAL` is the child's kind —
+`ST`, `CS`, `MV`, `RS`, `CB` for a nested combination. Children resolve by
+`LCNAME`, and **the dict key is not the `NO` field**, so match on `NAME` when
+reading back. There are ten sibling tables — `LCOM-GEN`, `-STEEL`, `-CONC`,
+`-SRC`, `-FDN`, `-STLCOMP`, `-CFSTEEL`, `-SEISMIC`, `-LINEAR`, `-ALU` — and a
+plugin that means "every combination" must read all ten.
+
+Results for a newly written combination are readable **immediately, with no
+re-analysis**. `DELETE /db/LCOM-GEN/<key>` removes one without disturbing others.
+
+### Combinations can only be written at the Base or Final stage
+
+If the model is parked inside a construction stage, every add, modify and delete
+on `LCOM-*` is refused:
+
+```
+[Error] Load Combination Data can be added/modified/deleted only at the
+Base(preprocessing)/Final(post-processing) Stages.
+```
+
+That arrives as **HTTP 200 with an `error` key**, so a client that only throws on
+`!response.ok` sails straight past it and fails later with unrelated wording.
+
+**The active stage cannot be read through MAPI.** `view/STAGE`, `db/CURSTAG`,
+`db/STAGE`, `db/ASTG`, `view/ACTIVESTAGE`, `post/STAGE` and `view/STAG` all 404.
+So this state can be warned about in advance and reported when a write is
+refused, but not detected. Warn before the run.
+
+Two further things change while the model sits in a stage, and neither announces
+itself:
+
+- **`/db/LCOM-*` lists only the combinations valid at that stage.** On the
+  reference model 15 combinations read as **2** — the only two built purely from
+  `CS` cases. This looks exactly like data loss and is not; returning the model
+  to Base/Final brings them all back. Check the stage before restoring anything.
+- **`/post/TABLE` changes which family it answers with by default.** A request
+  with no `OPT_CS` returned the 8 construction-stage series where the same call
+  at Final returned 51 entries covering every static case and combination.
+
+Suspected but unconfirmed: sending `OPT_CS` + `STAGE_STEP` in a result query may
+itself leave the model parked at that stage. The timeline fitted twice; with no
+way to read the stage back it could not be proven.
+
 ## Name and description length caps
 
 Caps differ per table and are enforced silently in some UIs and hard in others.

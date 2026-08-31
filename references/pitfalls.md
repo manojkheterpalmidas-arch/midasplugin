@@ -48,6 +48,20 @@ Every line here cost someone real time. Read before shipping.
       table.
 - [ ] Node result tokens carry the coordinate suffix: `REACTIONG`,
       `DISPLACEMENTG`.
+- [ ] Construction-stage and non-CS series are requested in **separate calls**.
+      `OPT_CS` is a mode switch, not a filter — one call answers with one family
+      and drops the other silently.
+- [ ] `OPT_CS` is never sent without `STAGE_STEP`; without it every stage comes
+      back at once and rows keyed on one stage overwrite each other.
+- [ ] A `CB` combination is requested in the **non-CS** family even when all its
+      children are `CS`.
+- [ ] Step tokens are taken from each stage's `bSV_STEP`. Where it is false only
+      `002(last)` exists and everything else returns an empty table.
+- [ ] Writes to `LCOM-*` are known to be refused unless the model is at the
+      **Base or Final** stage, and the plugin warns beforehand — the active stage
+      cannot be read through MAPI.
+- [ ] A short `/db/LCOM-*` listing is checked against the **stage** before it is
+      treated as data loss. Inside a stage only stage-valid combinations list.
 
 ## Correctness
 
@@ -59,8 +73,13 @@ Every line here cost someone real time. Read before shipping.
 - [ ] Near-ties have a stated policy. They are common, not a corner case.
 - [ ] Combination types that cannot yield a coexistent state (ABS, SRSS) are
       **refused**, not approximated.
+- [ ] A series that comes back empty is diagnosed by **enumerating what the model
+      publishes** (`LOAD_CASE_NAMES: []`) before the request is blamed. A
+      combination can name constituents the analysis never produced.
 - [ ] Anything unverified against a live model says so, in the readme and in the
-      UI. Construction stages are usually the unverified one.
+      UI. Construction stages were that gap until August 2026 and are now
+      measured — see `result-tables.md`; the remaining unknown is whether a
+      stage-scoped result query moves the model's own active stage.
 
 ## Host
 

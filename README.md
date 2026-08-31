@@ -14,11 +14,12 @@ JSON manual.
 ## What's in it
 
 ```
-SKILL.md                      the workflow and the four rules that cost the most time
+SKILL.md                      the workflow and the five rules that cost the most time
 references/
   mapi.md                     connection, error semantics, reads, writes, image capture
-  result-tables.md            POST /post/TABLE, tokens, load-case series, the envelope trap
-  write-shapes.md             verified payloads for NODE, ELEM, MATL, SECT, THIK, GRUP
+  result-tables.md            POST /post/TABLE, tokens, load-case series, the envelope trap,
+                              construction stages and the OPT_CS family split
+  write-shapes.md             verified payloads for NODE, ELEM, MATL, SECT, THIK, GRUP, LCOM
   host.md                     the plugin-host contract, manifest, packaging, WebView2 quirks
   ui.md                       layout, theming, moaui notes for patching shipped bundles
   testing.md                  the mock + Node harness pattern
@@ -49,7 +50,7 @@ node test/run.js              # 26 assertions, no CIVIL NX needed
 
 ## A taste of what's inside
 
-Four behaviours that every plugin gets wrong at least once:
+Five behaviours that every plugin gets wrong at least once:
 
 - **Errors arrive as HTTP 200 with an `error` key.** Checking `response.ok`
   reports every rejected write as a success.
@@ -61,6 +62,10 @@ Four behaviours that every plugin gets wrong at least once:
 - **A verified key does not mean a live session.** `/mapikey/verify` still
   answers `keyVerified: true` after CIVIL NX closes, with
   `status: "disconnected"`.
+- **`OPT_CS` is a mode switch, not a filter.** One `/post/TABLE` request returns
+  the construction-stage series *or* everything else, never both — and the
+  family it excludes comes back absent at HTTP 200 with no error. A combination
+  mixing stage cases with static ones cannot be read in one call.
 
 ## Scope and caveats
 
@@ -91,7 +96,7 @@ Point to Patch Convertor   ----------  Marketplace version 1.0.1 Point to Patch 
 
 Model Report Builder  ----------  Marketplace version 1.0.1  Model Report Builder 
 
-Load Combination Contribution Analyzer ----------   Marketplace version 1.0.1  https://support.midasuser.com/hc/ko/articles/61258768334233
+Load Combination Contribution Analyzer ----------   Marketplace version 1.0.2  https://support.midasuser.com/hc/ko/articles/61258768334233
 
 Bulk Tabular Result Exporter  ----------    Marketplace version 1.0.1  https://support.midasuser.com/hc/en-us/articles/60848073556633
 

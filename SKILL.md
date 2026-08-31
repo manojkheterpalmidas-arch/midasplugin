@@ -1,6 +1,6 @@
 ---
 name: midasplugin
-description: Build, test and package plugins for MIDAS CIVIL NX — the MAPI client, the plugin-host contract, verified request and response shapes for /db/, /post/TABLE and /view/CAPTURE, an offline mock so the plugin can be developed without CIVIL NX open, and the zip rules the host actually accepts. Use when creating or modifying a CIVIL NX plugin, calling the MIDAS MAPI, debugging a plugin that reports success but changes nothing in the model, or packaging a plugin for release.
+description: Build, test and package plugins for MIDAS CIVIL NX — the MAPI client, the plugin-host contract, verified request and response shapes for /db/, /post/TABLE and /view/CAPTURE, construction-stage results and the OPT_CS family split, an offline mock so the plugin can be developed without CIVIL NX open, and the zip rules the host actually accepts. Use when creating or modifying a CIVIL NX plugin, calling the MIDAS MAPI, reading construction-stage or load-combination results, debugging a plugin that reports success but changes nothing in the model, or packaging a plugin for release.
 ---
 
 # MIDAS CIVIL NX plugin builder
@@ -15,7 +15,7 @@ That simplicity is the whole opportunity: a folder of plain HTML, CSS and JS,
 zipped, is a shippable plugin. Everything hard about this work is in the API's
 undocumented behaviour, and that is what the references here carry.
 
-## Read this first: the four rules that cause the most lost time
+## Read this first: the five rules that cause the most lost time
 
 1. **Errors arrive as HTTP 200 with an `error` key.** Checking `response.ok`
    reports every rejected write as a success. Always parse the body and test for
@@ -29,6 +29,11 @@ undocumented behaviour, and that is what the references here carry.
 4. **A verified key does not mean a live session.** `/mapikey/verify` still
    answers `keyVerified: true` after CIVIL NX closes, with
    `status: "disconnected"`. Check `status === "connected"`.
+5. **`OPT_CS` on `/post/TABLE` is a mode switch, not a filter.** One request
+   returns the construction-stage series *or* everything else, never both, and
+   the excluded family is absent at HTTP 200 with no error. A combination mixing
+   stage cases with static ones needs one call per family. See
+   `references/result-tables.md`.
 
 ## Workflow
 
@@ -108,8 +113,8 @@ Load these as needed; do not read them all up front.
 | File | What it holds |
 |---|---|
 | `references/mapi.md` | Connection, error semantics, `/db/` reads, `PUT` writes, `/view/CAPTURE`, the exact failure messages and what each means |
-| `references/result-tables.md` | `POST /post/TABLE` — the Argument shape, table tokens, load-case series suffixes, and the envelope-addressing trap that returns silence |
-| `references/write-shapes.md` | Verified payloads: NODE, ELEM, MATL, SECT, THIK, GRUP, tendons, moving load (MVHL/MVLDBS), the field-name traps and the name/description length caps |
+| `references/result-tables.md` | `POST /post/TABLE` — the Argument shape, table tokens, load-case series suffixes, the envelope-addressing trap that returns silence, and construction-stage results: the `OPT_CS` family split, enumerating what a model publishes, and reading a stage case at post-stage |
+| `references/write-shapes.md` | Verified payloads: NODE, ELEM, MATL, SECT, THIK, GRUP, tendons, moving load (MVHL/MVLDBS), load combinations and the Base/Final stage restriction on writing them, the field-name traps and the name/description length caps |
 | `references/host.md` | The plugin host contract: query string, window messages, manifest, packaging, WebView2 quirks |
 | `references/ui.md` | Layout and theming conventions that make a plugin look native beside MIDAS's own, plus moaui component notes for patching shipped bundles |
 | `references/testing.md` | The mock + Node harness pattern, and how to verify offline |

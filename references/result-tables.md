@@ -21,7 +21,10 @@ from MIDAS's own shipped Load Combination Analyzer bundle, not from guesswork.
   `{ "<TABLE_NAME>": { "HEAD": [...], "DATA": [[...]] } }`. It is **not** the
   table token — that is `TABLE_TYPE`.
 - **`UNIT: {}` fails**, and a stray `EXPORT_PATH` makes the call fail too.
-- Construction stage entry is `"STAGE_STEP": ["<step>"]` plus `"OPT_CS": true`.
+- Construction stage entry is `"STAGE_STEP": ["<step>"]` plus `"OPT_CS": true` —
+  but `OPT_CS` selects which *family* of results the call answers with, and is
+  not a filter you can leave on. See **Construction stage results** below before
+  using it.
 - `STYLES` overrides the model's display precision. `Scientific` / `PLACE: 8`
   gives nine significant figures at any magnitude — necessary if the plugin
   self-validates its arithmetic against what MIDAS reports.
@@ -130,6 +133,98 @@ a real model. Decide and state a policy.
 
 Combination types that cannot yield a coexistent state at all, and should be
 refused rather than approximated: `ABS` (sign discarded) and `SRSS` (quadratic).
+
+## Construction stage results — a second family, not a filter
+
+Measured August 2026 on a staged precast-beam deck: 803 beams, 8 construction
+stages, 15 combinations.
+
+**`OPT_CS` is a mode switch.** One request answers with the construction-stage
+series *or* with everything else, never both. Ask for both together and the
+family the flag excludes is **absent at HTTP 200, with no error** — the same
+silence as a bad envelope suffix. Requesting
+`["Dead Load(CS)", "Thermal expansion(ST)", "Pedestrian loading(ST)"]` on one
+element:
+
+| Request | Rows returned |
+|---|---|
+| no `OPT_CS` (with or without `STAGE_STEP`) | the two `ST` cases — **CS absent** |
+| `"OPT_CS": false` + `STAGE_STEP` | same — CS absent |
+| `"OPT_CS": true` + `STAGE_STEP` | `Dead Load` only — **ST absent** |
+| `"OPT_CS": true`, no `STAGE_STEP` | `Dead Load` at **every stage at once** |
+
+Consequences for any plugin that decomposes a combination:
+
+- A combination mixing `CS` cases with static ones — which is what a real staged
+  bridge combination looks like — **cannot be resolved by one request**.
+  Partition the requested series by family and issue one call per family.
+- `STAGE_STEP` only narrows *which* stage; it does not switch families. With
+  `OPT_CS` on and no `STAGE_STEP` every stage comes back interleaved, so
+  anything keyed on a single stage silently overwrites rows. Require a stage.
+- **A `CB` combination always belongs to the non-CS family**, even when every
+  one of its children is a `CS` case. `summation(CB)` — 17 CS children — returned
+  rows with `OPT_CS` off and nothing with it on.
+
+## Enumerating what a model actually publishes
+
+`POST /post/TABLE` with **`"LOAD_CASE_NAMES": []`** returns every series the
+model publishes for that family and element. One element is enough. This is the
+cheapest way to tell *"this series does not exist"* from *"this series was
+dropped"*, and worth doing on the failure path before blaming the request:
+
+```json
+{"Argument":{ "TABLE_NAME":"probe", "TABLE_TYPE":"BEAMFORCE",
+  "UNIT":{"FORCE":"kN","DIST":"m"}, "NODE_ELEMS":{"KEYS":[301]},
+  "LOAD_CASE_NAMES":[], "STYLES":{"FORMAT":"Scientific","PLACE":8} }}
+```
+
+On the reference model that returned 8 CS series at every stage, and 51 entries
+in the non-CS family covering every static case and every combination.
+
+**A combination's definition is not evidence its constituents produce results.**
+The auto-generated `summation` named `Erection Load_1 … _10`, one per stage, and
+no stage published any such series. They are scaffolding: where the analysis
+accumulates stage-applied loads into `Dead Load`, every one reads zero. Confirmed
+two ways — the combination reconciled exactly against only the 7 real series
+across 300 items, and a wrapper (below) around `Erection Load_1` returned literal
+`0.00000000e+00` rows.
+
+## Reading a CS case at post-stage: the one-term combination
+
+A construction-stage case can be pulled into the *ordinary* result family by
+wrapping it in a one-term load combination and reading that by name:
+
+```json
+{"Assign":{"<free key>":{ "NAME":"~TMP01", "ACTIVE":"ACTIVE", "bCB":false,
+  "iTYPE":0, "DESC":"temporary",
+  "vCOMB":[{ "ANAL":"CS", "LCNAME":"Dead Load", "FACTOR":1 }] }}}
+```
+
+Then request `~TMP01(CB)` with **no `OPT_CS` and no stage**. Measured:
+
+- it returns the case's **final-stage** value — identical to `Dead Load(CS)` read
+  at the last stage that changes it, and onward;
+- `PUT /db/LCOM-GEN` is accepted and the results are readable **immediately, with
+  no re-analysis**;
+- it reaches series the construction-stage table never publishes at all;
+- `DELETE /db/LCOM-GEN/<key>` removes one wrapper without touching the others.
+
+This is the only way found to decompose a mixed CS/static combination in one
+result family. It is **post-stage only** — a `(CB)` returns nothing when
+`OPT_CS` is on, so per-stage work still needs the `OPT_CS` route.
+
+It also **writes to the user's model**, which turns a read-only plugin into a
+writing one. Create the wrappers under a recognisable prefix, delete them in a
+`finally` so an exception cannot leave them behind, and sweep any survivors at
+startup. And see the Base/Final stage restriction in `write-shapes.md` — the
+write is refused outright while the model sits inside a construction stage.
+
+## Step tokens follow `bSV_STEP`
+
+Do not offer `001(first)` unconditionally. Where a stage's `/db/STAG` record has
+`bSV_STEP: false` — the default — only `002(last)` exists, and every other token
+returns an empty table for every stage. Offering one produces an error that reads
+like a missing analysis option and sends the user hunting in the wrong place.
 
 ## Id namespaces collide
 

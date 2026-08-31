@@ -103,6 +103,44 @@ real time:
   `Td`/`tR`/`Ql`/`YL`; in an esbuild bundle they were `Q1`/`ir`/`mo`/…
   **Never carry a name from one bundle to another. Re-derive it each time.**
 
+### Keep the patch, not the patched bundle
+
+When a shipped plugin has no source, the maintainable artefact is a **patch
+script**, not the modified bundle. One script per release, applied to the
+**pristine** bundle rather than stacked on the previous release's output:
+
+- every replacement asserts its anchor occurs **exactly once**, and the script
+  refuses a partial apply, so a bundle that has moved on fails loudly instead of
+  silently half-patching;
+- it asserts the source is pristine, so it cannot be run twice;
+- added code is written in the bundle's own style — ASCII with `\uXXXX` escapes
+  if that is what the bundle uses — so the file stays single-encoding;
+- `node --check` the output before shipping it.
+
+When a new upstream bundle arrives, re-run the script against that. Diffing
+minified output is not a recovery plan.
+
+Prefix every identifier the patch introduces (`_myplugin*`) and assert the prefix
+is absent from the pristine bundle. That makes collisions impossible and makes
+the patch's own footprint greppable.
+
+### A theme layer that tags by index is a trap for later additions
+
+A common pattern for restyling a shipped bundle is a small script that walks the
+DOM and marks structural nodes. If it marks **by index** — `children[0..2]` as
+header/content/footer — then any later change that inserts an element beside them
+silently relabels the real content node as the footer and takes the layout with
+it. Two defences, both cheap: render additions *inside* an existing region rather
+than beside it, and mark your own nodes with a **class**, since the theme layer
+owns the attribute and rewrites it.
+
+Related: a status flag is only as good as its writers. In one bundle the
+key-verification gate called the model loader directly, fire-and-forget, and only
+one of the two call paths set the `busy` atom — so a spinner keyed on that atom
+stayed hidden for the entire ten-second startup read. Drive progress UI from a
+value the *loader itself* sets, not from a flag one of its callers happens to
+set.
+
 ## Export formats
 
 If the plugin exports documents, three library traps already paid for:

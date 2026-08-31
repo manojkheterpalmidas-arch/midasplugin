@@ -67,6 +67,15 @@ Then set the name in `manifest.json`, `index.html` (title + header), and
 `package.json`. Window size lives in `manifest.json`; 1280x760 is a good default
 — larger and it covers too much of CIVIL NX to be usable beside the model.
 
+**Copy the template rather than hand-rolling the shell, and if you do hand-roll
+it, port the window controls first.** The host draws no title bar and no browser
+chrome, so a plugin that does not render its own **close button cannot be
+dismissed from inside** — the user has to drag it aside or kill it from CIVIL NX.
+It is the most-omitted piece of a scratch-built plugin, because the API work is
+interesting and the shell is not, and no other check catches it: the pitfalls
+list asks whether close is wired *correctly*, which a plugin with no close button
+passes vacuously. `references/host.md` has the exact contract.
+
 ### 3. Build against the mock, not the program
 
 `mock-midas/server.js` serves the API *and* the plugin folder from one process,

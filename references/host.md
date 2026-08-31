@@ -27,6 +27,28 @@ Via `chrome.webview.postMessage`, as bare strings:
 | `REQ_WND_MOVE` | begin dragging the plugin window |
 | `REQ_EXIT` | close the plugin window |
 
+### The close button is not optional
+
+**Every plugin must draw its own close control.** The host gives the plugin
+window no browser chrome and no system title bar, so the only ✕ a user gets is
+the one the page renders. A plugin without one cannot be dismissed from inside:
+the user drags it out of the way, or kills it from CIVIL NX.
+
+This is the **most common omission when a plugin is scaffolded by hand instead of
+copied from `assets/template/`.** The API work is the interesting part and the
+window shell is not, so the shell never gets written — and nothing catches it,
+because every rule below about *how* to wire the controls passes vacuously on a
+plugin that has no controls at all. Check existence before correctness:
+
+- a close control is present and visible without scrolling,
+- it posts `REQ_EXIT`,
+- the header is a drag surface,
+- `document.title` is set, because the host displays it.
+
+`window.close()` is **not** the host mechanism. Keep it only where the template
+keeps it — inside the `catch`, for the plain-browser development case — never as
+the primary path.
+
 **`REQ_MOVE` is ignored.** One plugin's title bar did nothing for months because
 it sent `REQ_MOVE` — while `REQ_EXIT` was right, so the close button worked and
 hid the problem.

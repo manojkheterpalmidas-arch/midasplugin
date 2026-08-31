@@ -83,11 +83,19 @@ Every line here cost someone real time. Read before shipping.
 
 ## Host
 
+- [ ] **There is a close control at all**, visible without scrolling. Check this
+      before anything below it — the host draws no window chrome, so a plugin
+      that omits one cannot be dismissed from inside, and every "wired
+      correctly" item here passes vacuously when the controls are simply absent.
+      Hand-rolled scaffolds are where it goes missing; the template has it.
 - [ ] Drag posts **`REQ_WND_MOVE`** (not `REQ_MOVE`) from a **`mousedown`**
       handler (not `pointerdown`), gated on `button === 0 || 1`, and ignores
       clicks on controls.
-- [ ] Close posts `REQ_EXIT`. Both are wrapped in try/catch so the plugin still
-      runs in a plain browser.
+- [ ] Close posts `REQ_EXIT`, and the ✕ is excluded from the drag surface so
+      pressing it cannot start a window move instead. Both messages are wrapped
+      in try/catch so the plugin still runs in a plain browser.
+- [ ] `document.title` is set from the manifest `name`, so the title the host
+      shows cannot drift from the packaged one.
 - [ ] Window size in `manifest.json` is 1280×760 or smaller.
 - [ ] No CDN links. Everything vendored.
 - [ ] The model is not cached in `localStorage` — a restored copy looks identical

@@ -15,7 +15,7 @@ That simplicity is the whole opportunity: a folder of plain HTML, CSS and JS,
 zipped, is a shippable plugin. Everything hard about this work is in the API's
 undocumented behaviour, and that is what the references here carry.
 
-## Read this first: the five rules that cause the most lost time
+## Read this first: the rules that cause the most lost time
 
 1. **Errors arrive as HTTP 200 with an `error` key.** Checking `response.ok`
    reports every rejected write as a success. Always parse the body and test for
@@ -34,6 +34,14 @@ undocumented behaviour, and that is what the references here carry.
    the excluded family is absent at HTTP 200 with no error. A combination mixing
    stage cases with static ones needs one call per family. See
    `references/result-tables.md`.
+6. **A blocked main thread is indistinguishable from a broken plugin.** The main
+   thread is the UI thread: while it is blocked nothing repaints and no click is
+   delivered, **including the one on the close button**. Parsing one large result
+   body is enough. The tell is that it works on the small test model and is dead
+   on a real one — a symptom that scales with model size is a blocking bug, not
+   a wiring bug. Chunk long work and yield with a `MessageChannel` message, never
+   `setTimeout`, which is clamped to 1 s whenever the window is not visible. See
+   `references/host.md`.
 
 ## Workflow
 
@@ -72,9 +80,17 @@ it, port the window controls first.** The host draws no title bar and no browser
 chrome, so a plugin that does not render its own **close button cannot be
 dismissed from inside** — the user has to drag it aside or kill it from CIVIL NX.
 It is the most-omitted piece of a scratch-built plugin, because the API work is
-interesting and the shell is not, and no other check catches it: the pitfalls
-list asks whether close is wired *correctly*, which a plugin with no close button
-passes vacuously. `references/host.md` has the exact contract.
+interesting and the shell is not, and no other check catches it: a checklist item
+asking whether close is wired *correctly* passes vacuously on a plugin with no
+close button at all.
+
+Drawing one is only the first of four things that have to be right, and the other
+three each shipped broken on a real plugin: the ✕ must be a **sibling** of the
+drag surface rather than inside it, a missing host bridge must **report itself**
+rather than fall back to a `window.close()` that is a no-op in WebView2, the bar
+needs **its own flat icon** because the plugin-list badge is invisible on it, and
+**long work must yield** or the button cannot be clicked at all. The template
+does all four; `references/host.md` explains each with the failure it came from.
 
 ### 3. Build against the mock, not the program
 

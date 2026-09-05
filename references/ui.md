@@ -27,6 +27,36 @@ One scrolling screen beats a seven-tab layout for most plugins. Ask before
 building a model viewer — it is a lot of work that the host already provides
 behind the window.
 
+## Two icons, not one
+
+**`icon.svg` is the plugin-list icon and it is not the title-bar icon.** Ship
+both, and check each at the size it is actually used.
+
+MIDAS's own plugins show in the list as a **black rounded tile with a bright
+frame and a bold glyph** — read the construction off any installed plugin's
+`icon.svg`: a `<rect rx="2" fill="black">`, then a 1 px ring mask over a frame
+image, then the glyph. An icon that is not built that way stands out as not
+belonging; a pale drawing on a transparent tile is the usual mistake and looks
+unfinished beside the rest.
+
+That badge is then **invisible on the plugin's own title bar**, which is
+`#21272A`: a black tile on near-black, at the 12 px the bar renders. It loads
+perfectly and is reported as a missing icon. So the bar gets its own asset — no
+tile, **solid shapes only** because strokes go sub-pixel at 12 px, in the bar's
+ink `#BDC2C8`, with internal detail cut out by a `<mask>` rather than painted in
+the bar colour so it survives a change of shade.
+
+Which asset a header takes depends on the shell you built. The template's own
+header is a light panel with a 28 px icon, so it takes the badge; rebuild the
+shell as MIDAS's dark `#21272A` controller bar with a 12 px icon — which the
+newer plugins use — and it must take the flat glyph instead. The template ships
+both for exactly that reason.
+
+Render candidates at 12 / 16 / 28 **on the background they will actually sit
+on** before choosing, and pin which asset goes where in the offline suite —
+repointing a dark bar at `icon.svg` looks like a tidy-up and silently blanks it
+again.
+
 ## Say what the plugin will do, before it does it
 
 The header should carry the read/write claim as a permanent badge —
@@ -38,6 +68,43 @@ the plugin's selling point.
 
 For a writing plugin: preview first, commit second, and tell the user what will
 be deleted before it is.
+
+## The moaui house style, measured
+
+The newest plugins in this estate are built on MIDAS's own `moaui` React
+components. A plain HTML/CSS/JS plugin can sit beside them convincingly, because
+the language is only a dozen values — all of these were read out of a running
+moaui plugin with `getComputedStyle`, not eyeballed:
+
+| Part | Value |
+|---|---|
+| controller bar | `#21272A` on `#BDC2C8`, `2rem` tall, 12 px, icon at 20 px left |
+| page | `#F1F1F1` |
+| card | `#FFF`, radius 4, `0 2px 4px rgba(0,0,0,.14)`, padding 16 |
+| tabs | 48 px tall, 12 px UPPERCASE; active `#1F2937`/700 over a 2 px `#4B9AF4` indicator; enabled `#4B5563`/500; locked `#BDC2C8` |
+| buttons | `#EEEEEE` fill, `.8px solid #C4C6C8`, radius 4, 12 px/500, `10px 20px`, **not** uppercase |
+| inputs | white, `.8px #C4C6C8`, radius 4, `6px 10px`, 12 px |
+| tables | 12 px, 12 px cell padding, `.8px #E0E0E0` rules, `#DDDDDD` header band |
+| alerts | MUI standard severities (`#EDF7ED`/`#2E7D32`, `#FFF4E5`/`#ED6C02`, `#FDEDED`/`#D32F2F`, `#E5F6FD`/`#0288D1`) |
+| ink ramp | `#111827` / `#1F2937` / `#4B5563` / `#6B7280` / `#BDC2C8` |
+
+There is **no bold primary button** anywhere in those plugins — even Commit is
+the same grey outlined button.
+
+Worth copying beyond the colours: the **tabbed wizard**. One card, tabs across
+the top, each tab disabled until its prerequisite is met, and each panel opening
+with a severity banner that says what state it is in and where to go next
+("Factors are ready. Proceed to Groups & Relations."). It carries a long input
+sequence far better than one scrolling page, and the banner removes most of the
+"what do I do now" support traffic.
+
+**To see a compiled plugin's UI without CIVIL NX**, serve the extracted zip from
+a static server that also answers `/health` → 200, `/mapikey/verify` →
+`{keyVerified:true, status:"connected", program:"civil"}` and `/db/<TOKEN>` →
+`{TOKEN:{…}}`, then open it with `?mapiKey=x&redirectTo=http://localhost:PORT`.
+**`redirectTo` must carry the scheme** or `getBaseUri` logs "Invalid origin" and
+the body stays blank. Then read the tokens out of the live DOM rather than
+guessing them from screenshots.
 
 ## Reporting outcomes
 
@@ -51,6 +118,31 @@ be deleted before it is.
   weaker and truer claim than *"not defined"*.
 - Progress lines should count what the user cares about, not endpoints. "47
   endpoints" reads as "47 checks" and generates complaints.
+- **A blank cell states its own opposite.** A missing value usually means
+  something definite — "this face carries no demand", "not applicable here" —
+  and an empty cell reads as "not computed". Print the reason. One plugin's
+  design-force table showed blanks where the applied field opposed that face,
+  and was reported as only producing half its output.
+- **An action whose only effect is off-screen reads as broken.** A button that
+  fills a `<details>` below the fold looks inert; it was reported as "CSV not
+  working" while building 143 kB correctly every time. Scroll the result into
+  view, select it, and say in a status line what actually happened — including
+  whether a clipboard write succeeded, rather than claiming one that may not
+  have.
+- **Never put the run control inside a section that any option can hide.** One
+  plugin kept its Assess button in a panel that was hidden unless a particular
+  method was selected — and the default selection did not select it, so the
+  plugin rendered with no way to run it. Long-running actions belong in a
+  persistent footer.
+- **Show only what the user must decide.** Inside CIVIL NX the host supplies the
+  base URL and the key on the query string; offering them as editable fields is
+  noise, and a remembered base must never override `?redirectTo=` anyway. Show
+  the endpoint read-only, the key as a short fingerprint (it is a credential),
+  and a **Refresh** that re-verifies and re-reads the model.
+- **A native `<select multiple>` is the one control that never matches the rest
+  of the card**, and it is unusable past a few dozen entries. Use a filterable
+  table with a checkbox per row; it also gives you somewhere to show what each
+  row will actually do.
 
 ## Tables and numbers
 

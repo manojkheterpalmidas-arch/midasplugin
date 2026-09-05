@@ -20,24 +20,104 @@
 
   /* ------------------------------------------------------------ host bridge */
 
+  /** Post to the host bridge. Returns false when there is no bridge, which is
+   *  normal in a plain browser and a real fault inside CIVIL NX.
+   *
+   *  Everything that talks to the host goes through here so the "is there a
+   *  bridge" question is asked in one place. A bare try/catch at each call site
+   *  cannot tell a missing bridge from a thrown message. */
+  function toHost(message) {
+    var w = root.chrome && root.chrome.webview;
+    if (!w || typeof w.postMessage !== "function") return false;
+    try { w.postMessage(message); return true; }
+    catch (e) { return false; }
+  }
+
   function wireHost() {
     /* The host listens for REQ_EXIT and REQ_WND_MOVE. REQ_MOVE is IGNORED — a
        plugin sending it has a title bar that silently does nothing. */
     $("btn-close").addEventListener("click", function () {
-      try { root.chrome.webview.postMessage("REQ_EXIT"); }
-      catch (e) { root.close(); }
+      if (!toHost("REQ_EXIT")) {
+        /* window.close() is a NO-OP in WebView2. On its own this branch is a
+           button that fails silently, which is indistinguishable from one that
+           was never wired — and is exactly how users report it. Try it for the
+           plain-browser case, then SAY SO. */
+        try { root.close(); } catch (e) { /* ignored */ }
+      }
+      /* If the host honoured REQ_EXIT the window is gone and this never runs. */
+      setTimeout(function () {
+        showError({
+          message: "This window did not close.",
+          hint: "The plugin asked the CIVIL NX host to close it (REQ_EXIT) and " +
+                "the host did not act. Close the panel from CIVIL NX instead. " +
+                "In a plain browser tab there is no host to ask, and this " +
+                "message is expected."
+        });
+      }, 800);
     });
 
     /* REQ_WND_MOVE only works from mousedown. From pointerdown the window
        simply will not drag, while REQ_EXIT from the same bridge keeps working —
-       so the bridge looks healthy. Gate on the button so a right-click on the
-       header does not start a drag and swallow the context menu. */
-    document.querySelector("header.app-head").addEventListener("mousedown", function (e) {
-      if (e.button !== 0 && e.button !== 1) return;
-      if (e.target.closest("button, input, select, nav, a")) return;
-      try { root.chrome.webview.postMessage("REQ_WND_MOVE"); }
-      catch (err) { /* not hosted — running in a plain browser */ }
+       so the bridge looks healthy.
+
+       Bound to #drag-surface, which is a SIBLING of the header controls, so a
+       press on the close button is never part of the drag surface at all. The
+       target check below is belt and braces; nothing depends on it. */
+    var drag = document.getElementById("drag-surface");
+    if (drag) {
+      drag.addEventListener("mousedown", function (e) {
+        if (e.button !== 0 && e.button !== 1) return;
+        if (e.target.closest && e.target.closest("button, input, select, nav, a")) return;
+        toHost("REQ_WND_MOVE");
+      });
+    }
+  }
+
+  /* ---------------------------------------------------------- long work */
+
+  /* THE MAIN THREAD IS THE UI THREAD. While it is blocked nothing repaints and
+     NO CLICK IS DELIVERED — including the one on the close button. A plugin
+     that parses a large result body, or loops over tens of thousands of rows,
+     has a window that cannot be closed for the duration, and it will be
+     reported as a broken close button rather than as slow code.
+
+     The tell: it works on a small test model and is dead on a real one. A
+     symptom that scales with model size is a blocking bug, not a wiring bug.
+
+     Yield with a MessageChannel message, NOT setTimeout:
+       - a resolved promise is a MICROtask and does not yield at all;
+       - setTimeout(0) is CLAMPED TO ONE SECOND whenever the window is not
+         visible, so a few hundred yields become minutes of pure waiting the
+         moment the user clicks away from the plugin;
+       - a MessageChannel message is a macrotask and is not throttled.
+     Input events outrank both, so one turn of the loop is all a click needs. */
+  var yieldChannel = typeof MessageChannel === "function" ? new MessageChannel() : null;
+  var yieldQueue = [];
+  if (yieldChannel) {
+    yieldChannel.port1.onmessage = function () {
+      var fn = yieldQueue.shift();
+      if (fn) fn();
+    };
+  }
+
+  function yieldToUi() {
+    return new Promise(function (resolve) {
+      if (!yieldChannel) { setTimeout(resolve, 0); return; }
+      yieldQueue.push(resolve);
+      yieldChannel.port2.postMessage(0);
     });
+  }
+
+  /** Run `worker` over `items` in slices, yielding between them.
+   *
+   *  Size the slice by how long ONE call takes, not by how tidy the number
+   *  looks: the aim is to be back in the event loop within a frame or two. */
+  async function runChunked(items, size, worker, onProgress) {
+    for (var i = 0; i < items.length; i += size) {
+      await yieldToUi();
+      if (onProgress) onProgress(i, items.length);
+      await worker(items.slice(i, i + size));
+    }
   }
 
   /* ------------------------------------------------------------- connection */

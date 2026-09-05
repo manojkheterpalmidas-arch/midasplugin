@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="Plugin">
+  <title>Plugin</title>
+  <!--
+    THE CONTROLLER-BAR GLYPH. A different asset from icon.svg on purpose.
+
+    icon.svg is the plugin-LIST icon, and the estate's house style for that is a
+    black tile with a bright frame. Rendered at 12px on the plugin's own dark
+    title bar, a black tile is a black square on near-black: it loads perfectly
+    and is invisible. That gets reported as a missing icon.
+
+    So the bar gets its own asset: no tile, SOLID SHAPES ONLY (strokes go
+    sub-pixel at 12px), in the bar's ink colour. Internal detail is cut out with
+    a mask rather than painted in the bar colour, so the glyph stays correct if
+    the bar's shade ever changes.
+
+    Replace the shapes with something specific to your plugin, and check it at
+    12px on #21272A before shipping - that is the only size the bar uses.
+  -->
+  <mask id="barglyph">
+    <rect x="2" y="5.5" width="20" height="13" rx="1.5" fill="#fff"/>
+    <rect x="4.5" y="9" width="15" height="2" rx="1" fill="#000"/>
+    <rect x="4.5" y="13" width="15" height="2" rx="1" fill="#000"/>
+  </mask>
+  <rect width="24" height="24" fill="#BDC2C8" mask="url(#barglyph)"/>
+</svg>

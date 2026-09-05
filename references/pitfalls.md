@@ -2,6 +2,32 @@
 
 Every line here cost someone real time. Read before shipping.
 
+## The window shell
+
+![The plugin window shell](images/window-shell.svg)
+
+- [ ] There **is** a close control, visible without scrolling. Check existence
+      before correctness; every rule below passes vacuously without one.
+- [ ] The close control is a **sibling** of the drag surface, not inside it. A
+      test asserts they are not nested — pressing a ✕ that contains an icon
+      delivers the `<path>` as the event target, not the button.
+- [ ] The drag surface has `align-self: stretch` and fills the bar's height, so
+      the strips above and below it drag too.
+- [ ] Host messages go through one helper that **detects** a missing bridge.
+      `window.close()` is a no-op in WebView2, so a `catch` that falls back to it
+      is a button that fails in silence.
+- [ ] An unhonoured `REQ_EXIT` reports itself on screen after ~800 ms.
+- [ ] `REQ_WND_MOVE` is posted from **`mousedown`** (not `pointerdown`) and
+      gated on `button === 0 || 1`.
+- [ ] There are **two icons**: the black badge for the plugin list, and a flat
+      solid-shape glyph in `#BDC2C8` for the title bar. Checked at 12 px on
+      `#21272A` — a badge with a dark tile is invisible there.
+- [ ] Long work is **chunked and yields**, with a `MessageChannel` message and
+      not `setTimeout`. Anything that blocks for seconds makes the close button
+      unclickable and will be reported as a broken close button.
+- [ ] The run control is **not** inside a panel that any option can hide.
+- [ ] `document.title` is set — the host displays it.
+
 ## API
 
 - [ ] The client parses the **body** and tests for `error` — it does not branch
@@ -22,6 +48,11 @@ Every line here cost someone real time. Read before shipping.
       envelope-valuedness, not from the combination's own type.
 - [ ] Load-case names are not parsed with a greedy paren regex — real names
       contain parentheses.
+- [ ] Result rows are matched to requested cases by the label the **response**
+      uses, not the one that was sent. The kind is dropped and only the sense
+      survives: `Asphalt(ST)` comes back as `Asphalt`, `ENV-1(CB:max)` as
+      `ENV-1(max)`. Build the expected label per case rather than stripping a
+      suffix off the reply — names carry their own trailing parentheses.
 - [ ] Selections carry a **namespace**. Element and elastic-link ids collide, on
       the order of hundreds per model.
 - [ ] `PUT` is known to **upsert, not replace**; a rebuild deletes GRUP, ELEM,

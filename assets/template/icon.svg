@@ -1,8 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Plugin">
-  <rect width="64" height="64" rx="12" fill="#2f6bed"/>
-  <!-- a girder line on two supports: replace with something specific to the plugin -->
-  <path d="M10 26h44" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
-  <path d="M16 26v8M32 26v8M48 26v8" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity=".7"/>
-  <path d="M10 44l6-10 6 10zM42 44l6-10 6 10z" fill="#ffffff" opacity=".9"/>
-  <path d="M6 48h52" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity=".55"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28"
+     fill="none" role="img" aria-label="Plugin">
+  <title>Plugin</title>
+  <!--
+    THE PLUGIN-LIST ICON. Replace the glyph with something specific to your
+    plugin; keep the badge around it.
+
+    MIDAS's own plugins show in the list as a BLACK ROUNDED TILE with a bright
+    frame and a bold glyph. An icon that is not built that way stands out as
+    not belonging - a pale drawing on a transparent tile is the usual mistake,
+    and it looks unfinished next to the rest.
+
+    The frame here is a plain gradient, which is close. The real house frame is
+    a 321x321 PNG that MIDAS's own icons carry, revealed through this same
+    one-pixel ring mask; if you want an exact match, lift it out of an installed
+    plugin's icon.svg (search it for `pattern` and the base64 `<image>`) and
+    swap it in below. It is not vendored here because it is MIDAS's asset, not
+    this template's.
+
+    Whatever you draw, keep it in the light blue pair (#4B9AF4 / #B9D1EB) - the
+    tile is black, so a dark glyph disappears. Check it at 34px, which is the
+    size the plugin list renders.
+
+    This is NOT the icon for the title bar. See icon-bar.svg.
+  -->
+  <rect width="28" height="28" rx="2" fill="black"/>
+
+  <mask id="ring" style="mask-type:alpha" maskUnits="userSpaceOnUse"
+        x="0" y="0" width="28" height="28">
+    <rect x="0.5" y="0.5" width="27" height="27" rx="1.5" stroke="#D9D9D9"/>
+  </mask>
+  <g mask="url(#ring)">
+    <rect x="-1" y="-1" width="30" height="30" fill="url(#frame)"/>
+  </g>
+
+  <!-- Placeholder glyph: replace with the plugin's own subject. -->
+  <rect x="4" y="10.4" width="20" height="10.4" rx="1"
+        fill="#13293f" stroke="#4b9af4" stroke-width="1"/>
+  <path d="M6.4 13.2h15.2" stroke="#b9d1eb" stroke-width="1.35" stroke-linecap="round"/>
+  <path d="M6.4 18h15.2" stroke="#b9d1eb" stroke-width="1.35" stroke-linecap="round"/>
+  <path d="M14 4.1v3.4" stroke="#b9d1eb" stroke-width="1.25" stroke-linecap="round"/>
+  <path d="M12.2 6.9 14 9.1l1.8-2.2z" fill="#b9d1eb"/>
+
+  <defs>
+    <linearGradient id="frame" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0"    stop-color="#F0479E"/>
+      <stop offset="0.25" stop-color="#F5B93D"/>
+      <stop offset="0.5"  stop-color="#3ECf8E"/>
+      <stop offset="0.75" stop-color="#4B9AF4"/>
+      <stop offset="1"    stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
 </svg>

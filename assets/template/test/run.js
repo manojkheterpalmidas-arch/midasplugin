@@ -129,6 +129,56 @@ const section = (t) => console.log("\n— " + t);
   }, {});
   ok(stripped && stripped.plg, "EXPORT_PATH is stripped before every send");
 
+  section("window shell");
+  /* These are STRUCTURAL, because the close button is the most-broken part of a
+     CIVIL NX plugin and every one of these failures shipped on a real one.
+     See references/host.md. */
+  {
+    const fs = require("fs");
+    const root = path.join(__dirname, "..");
+    const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+    const app = fs.readFileSync(path.join(root, "js", "app.js"), "utf8");
+
+    ok(/id="btn-close"/.test(html), "a close control exists at all");
+    ok(/<title>[^<]+<\/title>/.test(html), "document.title is set — the host shows it");
+
+    const drag = /<div id="drag-surface"[\s\S]*?<\/div>\s*<\/div>/.exec(html) ||
+                 /<div id="drag-surface"[\s\S]*?<\/div>/.exec(html);
+    ok(!!drag, "#drag-surface exists");
+    ok(drag && !/id="btn-close"/.test(drag[0]),
+       "the close button is NOT inside the drag surface (a drag would start on it)");
+    ok(html.indexOf('id="drag-surface"') < html.indexOf('id="btn-close"'),
+       "the close button follows the drag surface as a sibling");
+    ok(/getElementById\("drag-surface"\)/.test(app),
+       "the drag handler is bound to #drag-surface, not to the whole header");
+
+    ok(/function toHost\(/.test(app), "host messages go through one bridge helper");
+    ok(/typeof w\.postMessage !== "function"/.test(app),
+       "toHost DETECTS a missing bridge rather than relying on a thrown error");
+    ok(/did not close/.test(app),
+       "an unhonoured REQ_EXIT reports itself — window.close() is a no-op in WebView2");
+    ok(/REQ_EXIT/.test(app) && /REQ_WND_MOVE/.test(app), "both host messages are used");
+    ok(!/REQ_MOVE"/.test(app), "REQ_MOVE is not sent — the host ignores it");
+    ok(/addEventListener\("mousedown"/.test(app), "the drag is from mousedown, not pointerdown");
+
+    ok(/new MessageChannel\(\)/.test(app),
+       "yieldToUi uses MessageChannel — setTimeout is clamped to 1s when hidden");
+    ok(/function runChunked\(/.test(app),
+       "a chunking helper exists; blocking the main thread kills the close button");
+
+    /* BOTH assets ship. Which one the header should use depends on the shell:
+       this template's header is a light panel at 28px, so it takes the badge;
+       a dark #21272A controller bar at 12px must take the flat glyph, or it
+       renders a black square on near-black and is reported as missing. */
+    ok(fs.existsSync(path.join(root, "icon.svg")), "the plugin-list badge exists");
+    ok(fs.existsSync(path.join(root, "icon-bar.svg")), "the dark-bar glyph exists");
+    const badge = fs.readFileSync(path.join(root, "icon.svg"), "utf8");
+    const glyph = fs.readFileSync(path.join(root, "icon-bar.svg"), "utf8");
+    ok(/fill="black"/.test(badge), "the list badge carries the house black tile");
+    ok(!/fill="black"/.test(glyph), "the dark-bar glyph carries no tile");
+    ok(/#BDC2C8/i.test(glyph), "the dark-bar glyph is in the bar's ink colour");
+  }
+
   section("host query string");
   eq(MapiM.keyFromLocation("?mapiKey=abc&redirectTo=http://x/civil"), "abc", "key read from the query string");
   eq(MapiM.baseFromLocation("?redirectTo=http://x/civil/"), "http://x/civil", "redirectTo wins, trailing slash trimmed");

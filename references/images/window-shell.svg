@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" width="900" height="500"
+     font-family="Segoe UI, system-ui, sans-serif" role="img"
+     aria-label="How the plugin title bar must be built: the close button is a sibling of the drag surface, and the bar needs its own flat icon">
+  <title>Plugin window shell: drag surface, close button and icons</title>
+  <rect width="900" height="500" fill="#ffffff"/>
+
+  <!-- ============================== 1. STRUCTURE ============================ -->
+  <text x="24" y="30" font-size="15" font-weight="700" fill="#111827">1 &#160;The close button is a SIBLING of the drag surface</text>
+
+  <!-- WRONG -->
+  <text x="24" y="58" font-size="12" font-weight="700" fill="#B4322A">✗ nested — needs a target guard to survive</text>
+  <rect x="24" y="68" width="400" height="54" rx="3" fill="#FBEAEA" stroke="#E0B4B0"/>
+  <text x="34" y="86" font-size="11" fill="#8C2F28">&lt;header&gt;  ← mousedown posts REQ_WND_MOVE</text>
+  <rect x="34" y="92" width="352" height="22" rx="2" fill="#F6D8D6" stroke="#E0B4B0"/>
+  <text x="42" y="107" font-size="11" fill="#8C2F28">icon + title</text>
+  <rect x="322" y="94" width="58" height="18" rx="2" fill="#fff" stroke="#E0B4B0"/>
+  <text x="340" y="107" font-size="11" fill="#B4322A">✕</text>
+  <text x="24" y="140" font-size="11" fill="#6B7280">A press on the ✕ delivers the &lt;path&gt; inside its icon as e.target,</text>
+  <text x="24" y="155" font-size="11" fill="#6B7280">not the button. The drag starts, WebView2 enters its move loop,</text>
+  <text x="24" y="170" font-size="11" fill="#6B7280">and the click never lands.</text>
+
+  <!-- RIGHT -->
+  <text x="470" y="58" font-size="12" font-weight="700" fill="#1B7A45">✓ siblings — cannot go wrong</text>
+  <rect x="470" y="68" width="400" height="54" rx="3" fill="#EFF7F2" stroke="#A9CCB6"/>
+  <text x="480" y="86" font-size="11" fill="#1B5E3A">&lt;header&gt;</text>
+  <rect x="480" y="92" width="300" height="22" rx="2" fill="#D9EEE3" stroke="#A9CCB6"/>
+  <text x="488" y="107" font-size="11" fill="#1B5E3A">#drag-surface  ← mousedown only here</text>
+  <rect x="788" y="92" width="70" height="22" rx="2" fill="#fff" stroke="#A9CCB6"/>
+  <text x="816" y="107" font-size="11" fill="#1B7A45">✕</text>
+  <text x="470" y="140" font-size="11" fill="#6B7280">The ✕ is outside the drag surface, so no drag can start on it</text>
+  <text x="470" y="155" font-size="11" fill="#6B7280">however the event target resolves. Give #drag-surface</text>
+  <text x="470" y="170" font-size="11" fill="#6B7280">flex:1 1 auto and align-self:stretch so it fills the bar.</text>
+
+  <line x1="24" y1="192" x2="876" y2="192" stroke="#E0E0E0"/>
+
+  <!-- ============================== 2. ICONS ================================ -->
+  <text x="24" y="222" font-size="15" font-weight="700" fill="#111827">2 &#160;A plugin needs TWO icons</text>
+
+  <!-- list badge on light -->
+  <text x="24" y="248" font-size="12" fill="#4B5563">icon.svg — the plugin list (light background)</text>
+  <rect x="24" y="258" width="270" height="58" rx="3" fill="#F1F1F1" stroke="#D6DBE0"/>
+  <rect x="38" y="271" width="32" height="32" rx="3" fill="black"/>
+  <rect x="38.6" y="271.6" width="30.8" height="30.8" rx="2.6" fill="none" stroke="url(#g)" stroke-width="1.2"/>
+  <rect x="45" y="282" width="18" height="10" rx="1" fill="#13293f" stroke="#4b9af4" stroke-width="0.9"/>
+  <path d="M47 285h14M47 289h14" stroke="#b9d1eb" stroke-width="1.1"/>
+  <text x="82" y="285" font-size="12" font-weight="600" fill="#1F2937">My Plugin</text>
+  <text x="82" y="299" font-size="10" fill="#7a7f87">NX 2026</text>
+  <text x="24" y="336" font-size="11" fill="#1B7A45">✓ black badge reads correctly here</text>
+
+  <!-- same badge on the dark bar -->
+  <text x="320" y="248" font-size="12" fill="#4B5563">…the same file on the title bar</text>
+  <rect x="320" y="258" width="270" height="58" rx="3" fill="#21272A"/>
+  <rect x="338" y="281" width="12" height="12" rx="1" fill="black"/>
+  <text x="360" y="291" font-size="11" fill="#BDC2C8">My Plugin</text>
+  <text x="320" y="336" font-size="11" fill="#B4322A">✗ black tile on #21272A — loads fine, invisible</text>
+  <text x="320" y="351" font-size="11" fill="#6B7280">reported as “the icon is missing”</text>
+
+  <!-- bar glyph -->
+  <text x="616" y="248" font-size="12" fill="#4B5563">icon-bar.svg — solid shapes, bar ink</text>
+  <rect x="616" y="258" width="260" height="58" rx="3" fill="#21272A"/>
+  <g transform="translate(634,281)">
+    <mask id="m">
+      <rect x="1" y="2.75" width="10" height="6.5" rx="0.8" fill="#fff"/>
+      <rect x="2.25" y="4.5" width="7.5" height="1" rx="0.5" fill="#000"/>
+      <rect x="2.25" y="6.5" width="7.5" height="1" rx="0.5" fill="#000"/>
+    </mask>
+    <rect width="12" height="12" fill="#BDC2C8" mask="url(#m)"/>
+  </g>
+  <text x="656" y="291" font-size="11" fill="#BDC2C8">My Plugin</text>
+  <text x="616" y="336" font-size="11" fill="#1B7A45">✓ no tile, solid shapes, #BDC2C8</text>
+  <text x="616" y="351" font-size="11" fill="#6B7280">strokes go sub-pixel at 12px — avoid them</text>
+
+  <line x1="24" y1="376" x2="876" y2="376" stroke="#E0E0E0"/>
+
+  <!-- ============================== 3. MAIN THREAD ========================== -->
+  <text x="24" y="406" font-size="15" font-weight="700" fill="#111827">3 &#160;A blocked main thread is a dead close button</text>
+  <text x="24" y="430" font-size="11.5" fill="#4B5563">The main thread is the UI thread. While it is blocked nothing repaints and no click is delivered — including the one on the ✕.</text>
+  <text x="24" y="448" font-size="11.5" fill="#4B5563">Parsing one large result body, or looping tens of thousands of rows, is enough. The tell: <tspan font-weight="700">it works on the test model and is dead on a real one.</tspan></text>
+  <text x="24" y="466" font-size="11.5" fill="#4B5563">A symptom that scales with model size is a blocking bug, not a wiring bug. Chunk the work and yield between slices —</text>
+  <text x="24" y="484" font-size="11.5" fill="#4B5563">with a <tspan font-family="Consolas, monospace">MessageChannel</tspan> message, never <tspan font-family="Consolas, monospace">setTimeout</tspan>, which is clamped to 1 s whenever the window is not visible.</text>
+
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F0479E"/><stop offset="0.25" stop-color="#F5B93D"/>
+      <stop offset="0.5" stop-color="#3ECf8E"/><stop offset="0.75" stop-color="#4B9AF4"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -12,10 +12,21 @@
 <body>
 <main class="shell">
 
-  <!-- The whole header is the drag surface. app.js posts REQ_WND_MOVE from a
-       mousedown handler on it, ignoring clicks that land on a control. -->
-  <header class="app-head" title="Drag this bar to move the plugin window">
-    <div class="brand">
+  <!-- THE DRAG SURFACE IS A SIBLING OF THE CONTROLS, NEVER THEIR ANCESTOR.
+       app.js posts REQ_WND_MOVE from a mousedown on #drag-surface only, so a
+       press on the close button can never start a window drag - whatever the
+       event target resolves to. Nest the two and you are relying on a
+       closest() guard that has to reach through whatever is inside the button:
+       put an icon in it and e.target becomes the <path>, not the button.
+       See references/host.md. -->
+  <header class="app-head">
+    <div id="drag-surface" class="brand" title="Drag this bar to move the plugin window">
+      <!-- This header is a LIGHT panel at 28px, so the badge is the right asset
+           here. If you rebuild the shell as MIDAS's dark #21272A controller bar
+           with a 12px icon - which the newer plugins use - swap this for
+           ./icon-bar.svg: a badge with a dark tile is invisible there, and it
+           is reported as a missing icon rather than as a contrast problem.
+           Both assets ship for that reason. See references/host.md. -->
       <img src="./icon.svg" alt="" class="brand-icon">
       <div>
         <h1>Plugin Template</h1>

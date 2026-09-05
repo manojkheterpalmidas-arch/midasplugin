@@ -146,6 +146,10 @@ Load these as needed; do not read them all up front.
 | `references/probing.md` | How to settle an unknown API shape by writing to a scratch model |
 | `references/pitfalls.md` | The consolidated checklist — read before shipping |
 
+`assets/icon-frame.png` is the house icon frame, already embedded in the
+template's `icon.svg`. `references/images/` holds the diagrams the references
+link to.
+
 ## Provenance
 
 Everything in these references was **measured against live CIVIL NX 2026

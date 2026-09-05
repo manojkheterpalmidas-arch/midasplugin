@@ -175,6 +175,12 @@ const section = (t) => console.log("\n— " + t);
     const badge = fs.readFileSync(path.join(root, "icon.svg"), "utf8");
     const glyph = fs.readFileSync(path.join(root, "icon-bar.svg"), "utf8");
     ok(/fill="black"/.test(badge), "the list badge carries the house black tile");
+    /* EMBEDDED, not linked: an SVG loaded through <img src> cannot fetch
+       external resources, so a linked frame renders as nothing at all. */
+    ok(/data:image\/png;base64,/.test(badge),
+       "the list badge embeds the house frame rather than linking it");
+    ok(fs.existsSync(path.join(root, "..", "icon-frame.png")),
+       "the raw house frame ships for hand-drawn icons");
     ok(!/fill="black"/.test(glyph), "the dark-bar glyph carries no tile");
     ok(/#BDC2C8/i.test(glyph), "the dark-bar glyph is in the bar's ink colour");
   }

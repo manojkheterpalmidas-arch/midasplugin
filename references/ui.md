@@ -33,11 +33,29 @@ behind the window.
 both, and check each at the size it is actually used.
 
 MIDAS's own plugins show in the list as a **black rounded tile with a bright
-frame and a bold glyph** — read the construction off any installed plugin's
-`icon.svg`: a `<rect rx="2" fill="black">`, then a 1 px ring mask over a frame
-image, then the glyph. An icon that is not built that way stands out as not
-belonging; a pale drawing on a transparent tile is the usual mistake and looks
-unfinished beside the rest.
+frame and a bold glyph**. The construction is:
+
+```
+<rect width="28" height="28" rx="2" fill="black"/>      the tile
+<mask>  <rect x=".5" y=".5" width="27" height="27" rx="1.5" stroke="#D9D9D9"/>  </mask>
+<g mask="…"><rect x="-1" y="-1" width="30" height="30" fill="url(#frame)"/></g>
+…glyph…
+```
+
+The frame is **`assets/icon-frame.png`**, shipped with this skill and already
+embedded in `assets/template/icon.svg` — copy the template and you get it. It is
+the MIDAS logo tile, a 321×321 rainbow square with an **M** on it, and the ring
+mask reveals only its one-pixel border; that is why the "frame" turns out to be
+a logo when you open the file, and why nobody should try to redraw it as a
+gradient.
+
+**Embed it as a data URI, never link it.** An SVG loaded through
+`<img src="icon.svg">` cannot fetch external resources, so a linked PNG renders
+as nothing at all. That is why MIDAS's own icons embed it, and why the raw file
+is here only as a source for someone drawing a new icon by hand.
+
+An icon that is not built this way stands out as not belonging; a pale drawing
+on a transparent tile is the usual mistake and looks unfinished beside the rest.
 
 That badge is then **invisible on the plugin's own title bar**, which is
 `#21272A`: a black tile on near-black, at the 12 px the bar renders. It loads

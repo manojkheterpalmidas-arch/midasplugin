@@ -1,6 +1,6 @@
 # Concurrent Forces — MIDAS CIVIL NX
 
-**v1.4.0 · non-mutating**
+**v1.5.0 · non-mutating**
 
 Reports the **coexistent** results across a set of items. You nominate one *key
 item* and one *result quantity*; the plugin finds the load case, combination,
@@ -127,7 +127,7 @@ definition order wins, and every tie is reported in the results header.
 
 ## Running it
 
-Inside CIVIL NX: install `dist/Concurrent Forces v1.4.0.zip` from the Plug-in
+Inside CIVIL NX: install `dist/Concurrent Forces v1.5.0.zip` from the Plug-in
 menu, open it, fill the panel top to bottom, press **Find concurrent forces**.
 
 Without CIVIL NX:
@@ -141,16 +141,16 @@ Serve over **HTTP, not `file://`** — a `file://` page can serve a stale snapsh
 of some scripts while refreshing others, so UI changes appear to do nothing.
 
 ```bash
-node test/run.js      # 292 assertions, no CIVIL NX needed
+node test/run.js      # 313 assertions, no CIVIL NX needed
 ```
 
 Repackage after a change:
 
 ```bash
-node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.4.0.zip"
+node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.5.0.zip"
 # on Windows, equivalently:
-..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.4.0.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.4.0.zip"
+..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.5.0.zip"
+..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.5.0.zip"
 ```
 
 ## What is where
@@ -170,6 +170,41 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.4.
 | `js/app.js` | wiring only — no logic |
 | `mock-midas/server.js` | the API and the static files from one process |
 | `test/run.js` | the offline suite |
+
+## What changed in v1.5.0
+
+**The item set is elements, nodes and links together**, and says so. The
+structure-group picker takes a group's elements, its nodes, or both — a node is
+a member of the set in its own right now that reactions and displacements are
+results like any other.
+
+**The key item is a kind plus a number.** Choosing Element / Node / General link
+/ Elastic link decides which id space the number belongs to — the spaces
+collide, so this is what settles whether `201` means the element or the link —
+and the key effect list then offers **only the quantities that kind of item
+reports**. Offering all 39 at once meant most of them were refused the moment
+they were picked. A prefix typed by hand (`N12`) still wins, because it is the
+more specific statement.
+
+**The output position moved out of the inputs and into the results.** It was
+changing *which structural state was found* — and a state that governs at a
+quarter point is not less real for being there. The run now searches every
+output point; the position filters what is **displayed and exported**. The
+table, the chart and the CSV all walk the same filtered document, so they
+cannot disagree, and the filter says how many rows it hid and that the
+governing state is unchanged. Only the positions an answer actually contains
+are offered.
+
+**A node is one row, not two.** It is read from two tables — reactions and
+displacements — whose columns are disjoint; leaving them separate gave every
+node a pair of half-empty lines with the other half reading n/a. They merge, so
+a node reads with its FX…MZ and DX…RZ side by side. Sources whose components
+*overlap* are never merged: that would be two measurements of the same name
+collapsed into one invented number.
+
+**"Show selected only"** beside "Hide blocked". With 78 combinations the ticked
+ones are scattered through a scrolling box with no way to read back what the
+run will actually use.
 
 ## What changed in v1.4.0
 

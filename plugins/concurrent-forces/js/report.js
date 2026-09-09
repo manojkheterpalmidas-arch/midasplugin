@@ -160,8 +160,14 @@
 
     var rows = input.rows.map(function (r) {
       var src = El.SOURCES[r.source] || null;
+      /* A merged row carries the columns of every source it came from. */
+      var srcIds = r.sources || (r.source ? [r.source] : []);
       var carried = Object.create(null);
-      (src ? src.components : []).forEach(function (c) { carried[c.column] = true; });
+      srcIds.forEach(function (sid) {
+        (El.SOURCES[sid] ? El.SOURCES[sid].components : []).forEach(function (c) {
+          carried[c.column] = true;
+        });
+      });
 
       var cells = columns.map(function (col) {
         if (col.id === "item") return { text: r.elemKey, value: r.elemKey };
@@ -210,8 +216,12 @@
 
       return {
         cells: cells,
-        isKey: r.elemKey === input.keyElemKey && r.source === effect.source,
-        emphasis: (r.elemKey === input.keyElemKey && r.source === effect.source &&
+        /* The row's own identity travels with it, so a view can be filtered
+           without re-parsing cell text back into data. */
+        elemKey: r.elemKey, source: r.source, part: r.part,
+        hasPart: r.hasPart, partKind: r.partKind,
+        isKey: r.elemKey === input.keyElemKey && srcIds.indexOf(effect.source) >= 0,
+        emphasis: (r.elemKey === input.keyElemKey && srcIds.indexOf(effect.source) >= 0 &&
                    sameRow(r, gov)) ? effect.column : null
       };
     });
@@ -259,6 +269,72 @@
     return p ? p.label : id;
   }
 
+  /* --------------------------------------------------------------- filters */
+
+  /**
+   * A VIEW of the document, not a different answer.
+   *
+   * The output position is a question about what you want to LOOK at, not about
+   * which structural state governs — so it is applied here, to the finished
+   * document, rather than upstream where it would change the state that was
+   * found. The table, the chart and the CSV all walk the filtered document, so
+   * they cannot disagree about what is being shown.
+   *
+   * Sources with no I/J end — a node, a plate — pass every filter: their rows
+   * have no output position to choose between, and excluding them would be
+   * answering a question nobody asked.
+   *
+   * @param {Object} doc   from buildReport
+   * @param {Object} opts  { position: "I"|"J"|"both"|"all" }
+   */
+  function filterDocument(doc, opts) {
+    opts = opts || {};
+    var Conc = mod("concurrent.js", "CfConcurrent");
+    var position = opts.position || "all";
+    if (position === "all") return doc;
+
+    var rows = doc.rows.filter(function (r) {
+      return Conc.partAllowed(r.part, position, r.hasPart, r.partKind);
+    });
+    var hidden = doc.rows.length - rows.length;
+    if (!hidden) return doc;
+
+    var notes = doc.notes.slice();
+    notes.push("Showing " + rows.length + " of " + doc.rows.length + " rows: " +
+      positionText(position) + ". The governing state is unchanged — this filters " +
+      "what is displayed and exported, not what was found." +
+      (doc.rows.some(function (r) { return r.emphasis; }) &&
+       !rows.some(function (r) { return r.emphasis; })
+        ? " The governing row itself is at " +
+          (doc.rows.filter(function (r) { return r.emphasis; })[0].part) +
+          " and is not among them."
+        : ""));
+
+    var out = {};
+    Object.keys(doc).forEach(function (k) { out[k] = doc[k]; });
+    out.rows = rows;
+    out.notes = notes;
+    out.filtered = { position: position, hidden: hidden, total: doc.rows.length };
+    return out;
+  }
+
+  /** Which output positions a document actually contains, for the filter list. */
+  function positionsIn(doc) {
+    var Conc = mod("concurrent.js", "CfConcurrent");
+    var has = Object.create(null);
+    doc.rows.forEach(function (r) {
+      if (r.hasPart === false) return;
+      var p = Conc.normPart(r.part);
+      if (p === "I" || p === "J") has[p] = true;
+      else if (r.part) has.other = true;
+    });
+    return Conc.POSITIONS.filter(function (p) {
+      if (p.id === "all") return true;
+      if (p.id === "both") return has.I || has.J;
+      return !!has[p.id];
+    });
+  }
+
   /* ------------------------------------------------------------------ CSV */
 
   /**
@@ -293,7 +369,8 @@
     return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
   }
 
-  var api = { buildReport: buildReport, toCsv: toCsv };
+  var api = { buildReport: buildReport, toCsv: toCsv,
+              filterDocument: filterDocument, positionsIn: positionsIn };
   if (typeof module === "object" && module.exports) module.exports = api;
   root.CfReport = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -727,6 +727,9 @@
 
     var order = v.members.map(function (m) { return m.key; });
     var set = Conc.concurrentSet(rows, key, { order: order, position: position });
+    /* A node is read from two tables whose columns are disjoint. One row, not
+       two half-empty ones. */
+    set = Conc.mergeSiblingRows(set);
 
     var reported = uniq(set.map(function (r) { return r.elemKey; }));
     var silent = order.filter(function (k) { return reported.indexOf(k) < 0; });

@@ -495,3 +495,30 @@ details summary {
 }
 .grid tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--ink) 3%, transparent); }
 .grid tbody tr.key-row td { background: var(--ok-bg); font-weight: 600; }
+
+/* The output position is a VIEW control, so it sits with the results rather
+   than with the inputs that decide what was found. */
+.view-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.view-bar select { flex: 0 1 220px; }
+.view-bar .hint { margin: 0; }
+
+code {
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.field select { width: 100%; }

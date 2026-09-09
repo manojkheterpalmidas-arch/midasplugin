@@ -233,7 +233,10 @@
       if (oa == null) oa = 1e9;
       if (ob == null) ob = 1e9;
       if (oa !== ob) return oa - ob;
-      if (a.source !== b.source) return String(a.source).localeCompare(String(b.source));
+      /* Registry order, not alphabetical: it is the order the sources are
+         listed in and the order their columns appear in, so the row that
+         survives a merge is the one whose columns come first. */
+      if (a.source !== b.source) return sourceRank(a.source) - sourceRank(b.source);
       return partRank(a.part) - partRank(b.part);
     });
     return out;
@@ -249,6 +252,11 @@
    * order survived only because Array.sort is stable and the API happened to
    * return them in order.
    */
+  function sourceRank(id) {
+    var i = elementsModule().SOURCE_ORDER.indexOf(id);
+    return i < 0 ? 999 : i;
+  }
+
   function partRank(part) {
     var p = normPart(part);
     if (p === "I") return 0;
@@ -263,6 +271,57 @@
     /* A bare fraction between the ends sorts between them; anything else — a
        plate's node number, say — sorts after, in numeric order. */
     return (n > 0 && n < 1) ? n : 2 + n;
+  }
+
+  /**
+   * Merge rows that describe the SAME item at the same state from different
+   * tables.
+   *
+   * A node is read from two: reactions and displacements. Their columns are
+   * disjoint, so leaving them as two rows gives every node a pair of
+   * half-empty lines with the other half reading n/a — technically honest and
+   * useless to read. Merged, a node is one row carrying FX…MZ and DX…RZ
+   * together, which is what it is.
+   *
+   * Only rows whose component sets do NOT overlap are merged: two sources that
+   * both report an "Axial" would be two different measurements of the same
+   * name, and collapsing those would invent a number.
+   */
+  function mergeSiblingRows(rows) {
+    var El = elementsModule();
+    var byId = Object.create(null);
+    var order = [];
+
+    rows.forEach(function (r) {
+      var id = r.elemKey + SEP + r.part + SEP + r.key;
+      var seen = byId[id];
+      if (!seen) {
+        byId[id] = r;
+        order.push(id);
+        return;
+      }
+      var a = columnsOf(El, seen), b = columnsOf(El, r);
+      var overlap = b.some(function (c) { return a.indexOf(c) >= 0; });
+      if (overlap) {
+        /* Not siblings — two readings of the same quantity. Keep both rows and
+           let the report show them side by side rather than choosing. */
+        order.push(id + SEP + order.length);
+        byId[id + SEP + (order.length - 1)] = r;
+        return;
+      }
+      if (!seen.sources) seen.sources = [seen.source];
+      seen.sources.push(r.source);
+      Object.keys(r.values).forEach(function (c) {
+        if (seen.values[c] == null) seen.values[c] = r.values[c];
+      });
+    });
+
+    return order.map(function (id) { return byId[id]; });
+  }
+
+  function columnsOf(El, row) {
+    var src = El.SOURCES[row.source];
+    return src ? src.components.map(function (c) { return c.column; }) : [];
   }
 
   /* ------------------------------------------------------- composed states */
@@ -349,7 +408,8 @@
     parseTable: parseTable, joinKey: joinKey, describeKey: describeKey,
     normPart: normPart, partAllowed: partAllowed, partRank: partRank,
     score: score, findGoverning: findGoverning, concurrentSet: concurrentSet,
-    combineTerms: combineTerms, formatValue: formatValue
+    combineTerms: combineTerms, mergeSiblingRows: mergeSiblingRows,
+    formatValue: formatValue
   };
   if (typeof module === "object" && module.exports) module.exports = api;
   root.CfConcurrent = api;

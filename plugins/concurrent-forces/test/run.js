@@ -793,10 +793,22 @@ async function raw(mapi, opts) {
 
     /* A node carries BOTH sources; their columns are disjoint, so both are
        read and the criterion ranges over only the one the driver named. */
-    const sources = new Set(byReaction.rows.map((r) => r.source));
+    /* A node is read from BOTH node tables and the two merge onto one row,
+       their columns being disjoint — so the row carries every source it came
+       from rather than a pair of half-empty lines. */
+    const sources = new Set();
+    byReaction.rows.forEach((r) => (r.sources || [r.source]).forEach((x) => sources.add(x)));
     ok(sources.has("REACTION") && sources.has("DISPLACEMENT") && sources.has("BEAM"),
       "reactions, displacements and beam forces in one answer",
       JSON.stringify([...sources]));
+
+    const nodeRow = byReaction.rows.find((r) => r.elemKey === "N1");
+    eq((nodeRow.sources || []).join(","), "REACTION,DISPLACEMENT",
+      "a node is one row carrying both tables");
+    ok(nodeRow.values.FZ != null && nodeRow.values.DZ != null,
+      "with its reaction and its displacement side by side");
+    eq(byReaction.rows.filter((r) => r.elemKey === "N1").length, 1,
+      "not two half-empty rows");
 
     /* A free node publishes NO reaction row. That is absent, not zero. */
     const free = await analyse(ctx, {
@@ -885,12 +897,16 @@ async function raw(mapi, opts) {
     near(small.governing.value, metric.governing.value * 1000,
       "a reaction force scales with FORCE alone", 1e-6);
 
-    const mRow = metric.rows.find((r) => r.source === "DISPLACEMENT");
-    const sRow = small.rows.find((r) => r.source === "DISPLACEMENT");
+    /* The node's reaction and displacement now share one row, so both scalings
+       are checked on the same line — which is also the point of merging them. */
+    const mRow = metric.rows.find((r) => r.elemKey === "N1");
+    const sRow = small.rows.find((r) => r.elemKey === "N1");
     near(sRow.values.DZ, mRow.values.DZ * 1000,
       "a displacement scales with LENGTH", 1e-6);
     near(sRow.values.RX, mRow.values.RX,
       "and a rotation does not scale at all — it is already dimensionless", 1e-9);
+    near(sRow.values.FZ, mRow.values.FZ * 1000,
+      "while the reaction on the very same row scales with FORCE", 1e-6);
 
     const mMoment = metric.rows.find((r) => r.source === "BEAM" && r.part === partI(1));
     const sMoment = small.rows.find((r) => r.source === "BEAM" && r.part === partI(1));
@@ -944,6 +960,68 @@ async function raw(mapi, opts) {
     eq(all.rows.filter((r) => r.elemKey === "1").map((r) => r.part).join(","),
       [partI(1), "1/4", "2/4", "3/4", partJ(1)].join(","),
       "and all five in order along the member");
+  }
+
+  /* ==================================================================== */
+  section("the output position is a view, not a different answer");
+  {
+    /* Asking for the output position BEFORE the run changed which structural
+       state was found — a state that governs at a quarter point is not less
+       real for being there. The run now searches every output point, and the
+       position filters what is displayed and exported. */
+    mock.state.quarterPoints = true;
+    const run = await analyse(ctx, {
+      setText: "1to4, N1", keyItemText: "2", effectId: "BEAM:Moment-y",
+      criterion: "max", position: "all", selection: ["DL", "SDL", "LL"] });
+    mock.state.quarterPoints = false;
+
+    const doc = run.report;
+    eq(doc.rows.length, 21, "the document holds every output point, plus the node — " +
+      "one row for the node, not one per table it was read from");
+
+    const ends = Report.filterDocument(doc, { position: "both" });
+    eq(ends.rows.length, 9, "Both ends shows the two ends of each element");
+    eq(ends.filtered.hidden, 12, "and says how many it hid");
+    ok(ends.notes.some((n) => /filters what is displayed and exported/.test(n)),
+      "with a note that the governing state is unchanged",
+      JSON.stringify(ends.notes.slice(-1)));
+
+    /* A node has no output position to choose between. Excluding its row would
+       be answering a question nobody asked. */
+    ok(ends.rows.some((r) => r.elemKey === "N1"),
+      "a node survives every position filter");
+
+    const iOnly = Report.filterDocument(doc, { position: "I" });
+    eq(iOnly.rows.filter((r) => r.source === "BEAM").length, 4,
+      "Part I shows one row per element");
+    eq(Report.filterDocument(doc, { position: "all" }), doc,
+      "and All output points is the document itself, untouched");
+
+    /* Filtering must not change the answer — only what is shown. */
+    eq(ends.meta.load, doc.meta.load, "the governing load is unchanged");
+    eq(ends.columns.length, doc.columns.length, "and so are the columns");
+
+    /* The CSV walks the same filtered document, so the export cannot disagree
+       with the table it was exported from. */
+    const csvAll = Report.toCsv(doc).split("\r\n").filter((l) => l && !l.startsWith("#"));
+    const csvEnds = Report.toCsv(ends).split("\r\n").filter((l) => l && !l.startsWith("#"));
+    eq(csvAll.length - 1, doc.rows.length, "the unfiltered CSV has every row");
+    eq(csvEnds.length - 1, ends.rows.length, "and the filtered CSV has only the shown rows");
+
+    /* The chart is a walker over the same document too. */
+    const chartAll = ChartM.buildChart(doc, "Moment-y", { width: 600, height: 200 });
+    const chartEnds = ChartM.buildChart(ends, "Moment-y", { width: 600, height: 200 });
+    eq(chartAll.count, doc.rows.length, "the chart plots the document it is given");
+    eq(chartEnds.count, ends.rows.length, "so it follows the filter");
+
+    /* Only the positions an answer actually contains are offered. */
+    eq(Report.positionsIn(doc).map((p) => p.id).join(","), "I,J,both,all",
+      "a beam answer offers both ends and each end");
+    const nodesOnly = await analyse(ctx, {
+      setText: "N1, N15", keyItemText: "N1", effectId: "REACTION:FZ",
+      criterion: "max", position: "all", selection: ["DL"] });
+    eq(Report.positionsIn(nodesOnly.report).map((p) => p.id).join(","), "all",
+      "a node-only answer offers nothing to choose between");
   }
 
   /* ==================================================================== */
@@ -1172,11 +1250,19 @@ async function raw(mapi, opts) {
     eq(odd.find((g) => g.name === "String list").elements.join(","), "7,8,9,10,11",
       "a list given as text, ranges included, is parsed");
     eq(odd.length, 4, "every group is offered, empty ones included");
-    ok(/node\(s\) only/.test(odd.find((g) => g.name === "Nodes only").note),
-      "a node-only group says so rather than vanishing");
-    ok(/no element list under any name/.test(odd.find((g) => g.name === "Unknown shape").note),
-      "and an unrecognised record lists the keys it does carry",
+
+    /* A group's NODES are as usable as its elements now that a node can be a
+       member of the set in its own right, so a node-only group is not empty. */
+    const nodesOnly = odd.find((g) => g.name === "Nodes only");
+    eq(nodesOnly.nodes.join(","), "1,2", "a group's nodes are read too");
+    eq(nodesOnly.note, null, "and a node-only group is offered without complaint");
+
+    ok(/no element or node list under any name/.test(
+      odd.find((g) => g.name === "Unknown shape").note),
+      "an unrecognised record lists the keys it does carry",
       odd.find((g) => g.name === "Unknown shape").note);
+    eq(odd.find((g) => g.name === "Alt key").nodes.length, 0,
+      "a group with no node list reports none");
   }
 
   /* ==================================================================== */

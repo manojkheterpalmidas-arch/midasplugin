@@ -28,7 +28,7 @@
       <img src="./icon.svg" alt="" class="brand-icon">
       <div>
         <h1>Concurrent Forces</h1>
-        <p>MIDAS CIVIL NX &middot; v1.4.0</p>
+        <p>MIDAS CIVIL NX &middot; v1.5.0</p>
       </div>
     </div>
     <div class="head-actions">
@@ -44,12 +44,11 @@
   </header>
 
   <p class="lede">
-    Nominate one <strong>key item</strong> and one result quantity — a member
-    force, a plate force, a link force, a node reaction or a displacement. The plugin
-    finds the load case, combination, stage and step at which that component
-    governs there, and reports the forces in <strong>every other element of the
-    set at that same structural state</strong> — the coexistent forces, not each
-    element&rsquo;s own independent extreme.
+    Nominate one <strong>key item</strong> — an element, a node or a link — and
+    one result quantity. The plugin finds the load case, combination, stage and
+    step at which that quantity governs there, and reports <strong>every other
+    item in the set at that same structural state</strong> — the coexistent
+    results, not each item&rsquo;s own independent extreme.
   </p>
 
   <section id="error" class="panel error" hidden>
@@ -109,19 +108,30 @@
     </details>
   </section>
 
-  <!-- 1 ------------------------------------------------------ element set -->
+  <!-- 1 --------------------------------------------------------- item set -->
   <section class="panel">
-    <h2>1 &middot; Element set</h2>
+    <h2>1 &middot; Item set</h2>
+    <p class="hint tight">
+      Elements, nodes and links together — whatever you want reported at the
+      governing state. Write an element as <code>12</code>, a node as
+      <code>N12</code>, a general link as <code>L12</code>, an elastic link as
+      <code>EL12</code>, and a range as <code>15to20</code>.
+    </p>
     <div class="row">
       <input id="in-set" type="text" class="grow"
-             placeholder="10, 12, 15to20 — nodes N5, links L5 / EL5"
+             placeholder="12, 15to20, N101, N102, L5, EL7"
              title="Elements are plain numbers. A node is N12, a general link L12, an elastic link EL12, and a range is 15to20 or 15-20. Separate with commas.">
-      <label class="field-label" for="in-group">Pick from structure group</label>
+      <label class="field-label" for="in-group">From structure group</label>
       <select id="in-group">
         <option value="">—</option>
       </select>
-      <button id="btn-group-add" class="btn" type="button" title="Append that group's elements to the set">Add</button>
-      <button id="btn-group-replace" class="btn ghost" type="button" title="Replace the set with that group's elements">Replace</button>
+      <select id="in-group-what" title="Which members of that group to take">
+        <option value="elements">its elements</option>
+        <option value="nodes">its nodes</option>
+        <option value="both">elements and nodes</option>
+      </select>
+      <button id="btn-group-add" class="btn" type="button" title="Append them to the set">Add</button>
+      <button id="btn-group-replace" class="btn ghost" type="button" title="Replace the set with them">Replace</button>
       <!-- The host contract is a query string in and two window messages out
            (REQ_WND_MOVE, REQ_EXIT). There is no selection channel, so this
            cannot be wired; saying so beats a button that does nothing. -->
@@ -130,7 +140,7 @@
         Select in model window
       </button>
     </div>
-    <p id="set-line" class="hint">Elements are reported in the order you enter them.</p>
+    <p id="set-line" class="hint">Items are reported in the order you enter them.</p>
   </section>
 
   <!-- 2,3,4,5 ----------------------------------------------- the question -->
@@ -138,29 +148,28 @@
     <h2>2 &middot; The governing condition</h2>
     <div class="grid-form">
       <div class="field">
-        <label class="field-label" for="in-key-elem">Key item</label>
-        <input id="in-key-elem" type="text" placeholder="12, or N12 for a node"
-               title="One item — an element, a node, or a link — which must be a member of the set above.">
+        <label class="field-label" for="in-key-kind">Key item is a</label>
+        <select id="in-key-kind" title="Which id space the number below belongs to. The id spaces collide, so this is what decides whether 201 means the element or the link."></select>
+        <p class="hint tight">The key effect list follows this choice.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="in-key-elem">Key item number</label>
+        <input id="in-key-elem" type="text" placeholder="12"
+               title="One item, which must be a member of the set above. A prefix typed here (N12, L12, EL12) overrides the kind on the left.">
         <p id="key-line" class="hint tight">Its extreme picks the structural state.</p>
       </div>
 
       <div class="field">
         <label class="field-label" for="in-component">Key effect</label>
         <select id="in-component"></select>
-        <p class="hint tight">Any result quantity: member forces, plate forces,
-           link forces, node reactions or displacements.</p>
+        <p id="effect-line" class="hint tight">Only the quantities that kind of
+           item actually reports.</p>
       </div>
 
       <div class="field">
         <span class="field-label">Criterion</span>
         <div id="in-criterion" class="radios"></div>
-      </div>
-
-      <div class="field">
-        <label class="field-label" for="in-position">Output position</label>
-        <select id="in-position"></select>
-        <p class="hint tight">Applies to sources with an I and a J end; node and
-           plate results ignore it.</p>
       </div>
 
       <div class="field">
@@ -182,6 +191,7 @@
     <div class="row">
       <input id="in-filter" type="text" class="grow" placeholder="filter by name">
       <label class="check"><input id="in-hide-blocked" type="checkbox"> Hide blocked</label>
+      <label class="check"><input id="in-show-selected" type="checkbox"> Show selected only</label>
       <button id="btn-none" class="btn" type="button">Clear selection</button>
       <span id="sel-count" class="badge neutral">0 selected</span>
     </div>
@@ -224,6 +234,12 @@
     </div>
     <dl id="result-head" class="head-block"></dl>
     <ul id="result-notes" class="notes"></ul>
+
+    <div class="view-bar">
+      <label class="field-label" for="filter-position">Show output positions</label>
+      <select id="filter-position"></select>
+      <span id="filter-line" class="hint"></span>
+    </div>
 
     <figure class="chart-block">
       <figcaption class="chart-caption">

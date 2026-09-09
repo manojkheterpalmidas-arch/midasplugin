@@ -204,12 +204,16 @@
       out.push({
         id: id, name: name,
         elements: elems ? elems.list : [],
+        /* A group's NODES matter as much as its elements now that a node can be
+           a member of the set in its own right — reactions and displacements
+           are results like any other. */
+        nodes: nodes ? nodes.list : [],
         elementKey: elems ? elems.key : null,
-        note: elems && elems.list.length ? null
-            : elems ? "no elements — this group holds " +
-                ((nodes && nodes.list.length) ? nodes.list.length + " node(s) only" : "nothing")
-            : "the group record carries no element list under any name this " +
-              "plugin knows (keys present: " + Object.keys(g).join(", ") + ")",
+        nodeKey: nodes ? nodes.key : null,
+        note: (elems && elems.list.length) || (nodes && nodes.list.length) ? null
+            : elems ? "this group holds neither elements nor nodes"
+            : "the group record carries no element or node list under any name " +
+              "this plugin knows (keys present: " + Object.keys(g).join(", ") + ")",
         keys: Object.keys(g)
       });
     });

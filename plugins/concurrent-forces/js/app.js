@@ -20,12 +20,12 @@
   var S = {
     mapi: null, connected: false, model: null, loadModel: null,
     selection: Object.create(null), stageSteps: Object.create(null),
-    blocked: Object.create(null), result: null, csv: "",
+    blocked: Object.create(null), result: null, view: null, csv: "",
     probes: null, lastError: null, diag: ""
   };
 
   /* Kept in step with manifest.json and the header line by the offline suite. */
-  var VERSION = "1.4.0";
+  var VERSION = "1.5.0";
 
   function $(id) { return document.getElementById(id); }
 
@@ -302,30 +302,20 @@
     });
   }
 
+  /* An item kind, its namespace, and how it is written in the set. */
+  var KEY_KINDS = [
+    { id: "elem",  label: "Element",       prefix: "" },
+    { id: "node",  label: "Node",          prefix: "N" },
+    { id: "link",  label: "General link",  prefix: "L" },
+    { id: "elink", label: "Elastic link",  prefix: "EL" }
+  ];
+
   function renderUnits() {
-    /* THE DRIVER IS ANY RESULT QUANTITY, not just a beam member force. The list
-       is grouped by source so it is obvious that a reaction and a beam moment
-       are read from different tables — and the effect a user picks is what
-       decides which table the criterion ranges over. */
-    var sel = $("in-component");
-    sel.textContent = "";
-    El.SOURCE_ORDER.forEach(function (sid) {
-      var src = El.SOURCES[sid];
-      var g = document.createElement("optgroup");
-      g.label = src.label + (src.verified ? "" : "  (token probed, not verified)");
-      src.components.forEach(function (c) {
-        var o = option(sid + ":" + c.column, c.label);
-        o.title = src.label + " · column \"" + c.column + "\" · " +
-          El.unitLabel(c.unit, currentUnits());
-        g.appendChild(o);
-      });
-      sel.appendChild(g);
-    });
-    sel.value = "BEAM:Moment-y";
-    fill($("in-position"), Conc.POSITIONS.map(function (p) {
-      return { value: p.id, label: p.label };
+    fill($("in-key-kind"), KEY_KINDS.map(function (k) {
+      return { value: k.id, label: k.label };
     }));
-    $("in-position").value = "both";
+    $("in-key-kind").value = "elem";
+    renderEffects();
 
     var radios = $("in-criterion");
     radios.textContent = "";
@@ -351,6 +341,65 @@
       ". Moments are reported in force × length.";
   }
 
+  /**
+   * The key effect list, for the kind of item chosen.
+   *
+   * THE DRIVER IS ANY RESULT QUANTITY, and which quantities exist depends on
+   * what the item IS: a node has reactions and displacements, a beam has member
+   * forces, a plate has its own per-unit-length set. Offering all 39 at once
+   * meant most of them were refused the moment they were picked; offering the
+   * ones that item actually reports means the list is the answer to "what can I
+   * drive on", not a menu to be validated afterwards.
+   */
+  function renderEffects() {
+    var kind = $("in-key-kind").value || "elem";
+    var sel = $("in-component");
+    var previous = sel.value;
+    sel.textContent = "";
+
+    var sources = El.SOURCE_ORDER.filter(function (sid) {
+      return El.SOURCES[sid].namespace === kind;
+    });
+    sources.forEach(function (sid) {
+      var src = El.SOURCES[sid];
+      var g = document.createElement("optgroup");
+      g.label = src.label + (src.verified ? "" : "  (token probed, not verified)");
+      src.components.forEach(function (c) {
+        var o = option(sid + ":" + c.column, c.label);
+        o.title = src.label + " · column \"" + c.column + "\" · " +
+          El.unitLabel(c.unit, currentUnits());
+        g.appendChild(o);
+      });
+      sel.appendChild(g);
+    });
+
+    /* Keep the choice across a kind change where it still exists. */
+    var keep = Array.prototype.some.call(sel.options, function (o) {
+      return o.value === previous; });
+    sel.value = keep ? previous
+      : (kind === "elem" && findOption(sel, "BEAM:Moment-y")) ? "BEAM:Moment-y"
+      : (sel.options[0] ? sel.options[0].value : "");
+
+    $("effect-line").textContent = sources.length
+      ? "Read from " + sources.map(function (sid) { return El.SOURCES[sid].label; })
+          .join(" and ") + "."
+      : "This plugin reads no result table for that kind of item.";
+  }
+
+  function findOption(sel, value) {
+    return Array.prototype.some.call(sel.options, function (o) { return o.value === value; });
+  }
+
+  /** The set-syntax key for whatever the two key-item controls say. */
+  function keyItemText() {
+    var typed = ($("in-key-elem").value || "").trim();
+    /* A prefix typed by hand wins — it is the more specific statement, and
+       silently overriding it would address a different object. */
+    if (/^(EL|E|N|L)/i.test(typed)) return typed;
+    var kind = KEY_KINDS.filter(function (k) { return k.id === $("in-key-kind").value; })[0];
+    return (kind ? kind.prefix : "") + typed;
+  }
+
   /** Keep each effect's unit tooltip in step with the chosen unit system. */
   function retitleEffects() {
     var u = currentUnits();
@@ -373,6 +422,7 @@
 
     var filter = $("in-filter").value.trim().toLowerCase();
     var hide = $("in-hide-blocked").checked;
+    var onlySelected = $("in-show-selected").checked;
 
     S.loadModel.order.forEach(function (name) {
       var node = S.loadModel.nodes[name];
@@ -385,6 +435,10 @@
       var reasons = Combos.blockages(S.loadModel, name);
       S.blocked[name] = reasons;
       if (hide && reasons.length) return;
+      /* "Show selected only" is how a long list becomes reviewable: with 78
+         combinations the ticked ones are scattered through a scrolling box and
+         there is no way to read back what the run will actually use. */
+      if (onlySelected && !S.selection[name]) return;
       if (filter && name.toLowerCase().indexOf(filter) < 0) return;
 
       var tr = document.createElement("tr");
@@ -422,6 +476,15 @@
         node.children.forEach(function (c) { tbody.appendChild(childRow(c, 1)); });
       }
     });
+    if (!tbody.childNodes.length) {
+      var tr = document.createElement("tr");
+      var td = cell(onlySelected && !Object.keys(S.selection).length
+        ? "Nothing is selected yet — untick \"Show selected only\" to choose."
+        : "No entry matches the filter.", "note");
+      td.colSpan = 5;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
     renderSelectionCount();
   }
 
@@ -517,10 +580,14 @@
         elinks: S.model.elinks,
         loadModel: S.loadModel,
         setText: $("in-set").value,
-        keyItemText: $("in-key-elem").value,
+        keyItemText: keyItemText(),
         effectId: $("in-component").value,
         criterion: input_criterion,
-        position: $("in-position").value,
+        /* THE RUN ALWAYS SEARCHES EVERY OUTPUT POINT. Which of them to look at
+           is a question about the view, answered in the results panel — asking
+           it here would change which structural state was found, and a state
+           that governs at a quarter point is not less real for being there. */
+        position: "all",
         selection: Object.keys(S.selection),
         units: units,
         stageSteps: selectedStageSteps(),
@@ -530,15 +597,22 @@
       });
       S.result = out;
       S.lastError = null;
+      /* Only the positions this answer actually contains — offering "Part J"
+         for a set of nodes is a control that can only disappoint. */
+      var choices = Report.positionsIn(out.report);
+      fill($("filter-position"), choices.map(function (p) {
+        return { value: p.id, label: p.label };
+      }));
+      $("filter-position").value = "all";
       S.lastRun = {
         keyElemKey: out.report.meta.keyElemKey,
         effect: out.effect.id + " (" + out.effect.label + ")",
-        criterion: input_criterion, position: $("in-position").value,
+        criterion: input_criterion, position: "all",
         key: out.report.meta.load + " / " + (out.report.meta.stage || "-") +
              " / " + (out.report.meta.step || "-"),
         rows: out.rows.length, calls: out.calls, warnings: out.warnings
       };
-      await renderResult(out.report);
+      await renderView();
       progress("Done · " + out.rows.length + " rows at the governing state · " +
         S.mapi.calls + " requests", 1);
     } catch (err) {
@@ -551,7 +625,18 @@
 
   /* ----------------------------------------------------------------- report */
 
-  async function renderResult(doc) {
+  /** Re-render the table, the chart and the CSV from the current view filter. */
+  async function renderView() {
+    if (!S.result) return;
+    S.view = Report.filterDocument(S.result.report, { position: $("filter-position").value });
+    await renderResult(S.view, true);
+    var f = S.view.filtered;
+    $("filter-line").textContent = f
+      ? f.hidden + " of " + f.total + " rows hidden by this filter."
+      : S.result.report.rows.length + " rows.";
+  }
+
+  async function renderResult(doc, keepFilter) {
     /* The one number the user came for, said once and said large, before the
        supporting detail. A header block of twelve equal-weight rows makes the
        reader hunt for it. */
@@ -638,7 +723,7 @@
     var results = $("results");
     results.hidden = false;
     /* An action whose only effect is off-screen reads as broken. */
-    results.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!keepFilter) results.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   /* ------------------------------------------------------------------ chart */
@@ -884,8 +969,8 @@
 
   function validateKeyElement() {
     var line = $("key-line");
-    var text = $("in-key-elem").value.trim();
-    if (!text) {
+    var text = keyItemText();
+    if (!($("in-key-elem").value || "").trim()) {
       line.textContent = "Its extreme picks the structural state.";
       line.className = "hint tight";
       return;
@@ -925,10 +1010,10 @@
     $("btn-csv-copy").addEventListener("click", copyCsv);
     $("btn-csv-show").addEventListener("click", showCsvText);
     $("chart-component").addEventListener("change", function () {
-      if (S.result) drawChart(S.result.report, $("chart-component").value);
+      if (S.view) drawChart(S.view, $("chart-component").value);
     });
     root.addEventListener("resize", function () {
-      if (S.result) drawChart(S.result.report, $("chart-component").value);
+      if (S.view) drawChart(S.view, $("chart-component").value);
     });
     $("btn-none").addEventListener("click", function () {
       S.selection = Object.create(null);
@@ -937,6 +1022,12 @@
     });
     $("in-filter").addEventListener("input", function () { if (S.loadModel) renderCases(); });
     $("in-hide-blocked").addEventListener("change", function () { if (S.loadModel) renderCases(); });
+    $("in-show-selected").addEventListener("change", function () { if (S.loadModel) renderCases(); });
+    $("in-key-kind").addEventListener("change", function () {
+      renderEffects();
+      validateKeyElement();
+    });
+    $("filter-position").addEventListener("change", function () { renderView(); });
     $("in-set").addEventListener("input", describeSet);
     $("in-set").addEventListener("blur", validateKeyElement);
     $("in-key-elem").addEventListener("blur", validateKeyElement);
@@ -963,14 +1054,21 @@
     }
     var g = S.model.groups.filter(function (x) { return x.name === name; })[0];
     if (!g) return;
-    if (!g.elements.length) {
+
+    var what = $("in-group-what").value;
+    var take = [];
+    if (what !== "nodes") take = take.concat(g.elements.map(String));
+    if (what !== "elements") take = take.concat((g.nodes || []).map(function (n) {
+      return "N" + n; }));
+
+    if (!take.length) {
       line.textContent = "\"" + g.name + "\" added nothing: " +
-        (g.note || "it holds no elements") + ".";
+        (g.note || "it holds no " + (what === "both" ? "elements or nodes" : what)) + ".";
       line.className = "hint bad-text";
       return;
     }
     var cur = replace ? "" : $("in-set").value.trim();
-    $("in-set").value = (cur ? cur + ", " : "") + g.elements.join(", ");
+    $("in-set").value = (cur ? cur + ", " : "") + take.join(", ");
     describeSet();
     validateKeyElement();
   }

@@ -128,7 +128,8 @@
       if (r.status === "absent") continue;
       return {
         id: spec.id, kind: spec.kind, label: spec.label, key: key,
-        status: r.status, rows: r.status === "ok" ? r.rows : null, tried: tried
+        status: r.status, rows: r.status === "ok" ? r.rows : null,
+        url: r.url || null, tried: tried
       };
     }
     return {
@@ -139,15 +140,70 @@
 
   /* ------------------------------------------------------------- accessors */
 
-  /** Structure groups that contain at least one element, for the picker. */
+  /* The element list on a /db/GRUP row. E_LIST is the shape verified in
+     write-shapes.md, but the key is not worth betting the picker on: a group
+     that reads as empty because its list arrived under a name this code did
+     not look for is indistinguishable, in the UI, from a group that really is
+     empty. Look under every plausible name, then say which one answered. */
+  var GROUP_ELEM_KEYS = ["E_LIST", "ELIST", "E_LST", "ELEM_LIST", "ELEMLIST", "ELEM", "ELEMS"];
+  var GROUP_NODE_KEYS = ["N_LIST", "NLIST", "NODE_LIST", "NODELIST"];
+
+  function numberList(value) {
+    if (value == null) return null;
+    if (Array.isArray(value)) {
+      return value.map(Number).filter(function (n) { return isFinite(n) && n > 0; });
+    }
+    /* Some tables hand a list back as "1 2 3" or "1,2,3to8". */
+    if (typeof value === "string") {
+      var out = [];
+      value.split(/[\s,;]+/).forEach(function (tok) {
+        var m = /^(\d+)(?:to|-|~)(\d+)$/i.exec(tok);
+        if (m) { for (var i = Number(m[1]); i <= Number(m[2]); i++) out.push(i); return; }
+        var n = Number(tok);
+        if (isFinite(n) && n > 0) out.push(n);
+      });
+      return out;
+    }
+    return null;
+  }
+
+  function pickList(row, keys) {
+    for (var i = 0; i < keys.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(row, keys[i])) {
+        var list = numberList(row[keys[i]]);
+        if (list) return { key: keys[i], list: list };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Structure groups, for the picker.
+   *
+   * Every group is offered, including the ones with no elements — with the
+   * reason on the row. A group silently missing from the list is the failure
+   * that gets reported as "it is not reading my groups".
+   */
   function structureGroups(t) {
     if (!t || t.status !== "ok") return [];
     var out = [];
     Object.keys(t.rows).forEach(function (id) {
       var g = t.rows[id];
-      var list = (g.E_LIST || []).map(Number).filter(function (n) { return n > 0; });
-      if (!g.NAME) return;
-      out.push({ id: id, name: String(g.NAME), elements: list });
+      if (!g || typeof g !== "object") return;
+      var name = g.NAME != null ? String(g.NAME) : ("group " + id);
+      var elems = pickList(g, GROUP_ELEM_KEYS);
+      var nodes = pickList(g, GROUP_NODE_KEYS);
+      out.push({
+        id: id, name: name,
+        elements: elems ? elems.list : [],
+        elementKey: elems ? elems.key : null,
+        note: elems && elems.list.length ? null
+            : elems ? "no elements — this group holds " +
+                ((nodes && nodes.list.length) ? nodes.list.length + " node(s) only" : "nothing")
+            : "the group record carries no element list under any name this " +
+              "plugin knows (keys present: " + Object.keys(g).join(", ") + ")",
+        keys: Object.keys(g)
+      });
     });
     return out.sort(function (a, b) { return a.name.localeCompare(b.name); });
   }
@@ -233,6 +289,7 @@
         key: spec.id, label: spec.label,
         count: r.rows ? count(r.rows) : 0,
         status: r.status,
+        url: r.url || null,
         note: r.key
           ? (r.status === "ok" ? "read from /db/" + r.key
                                : "none in this model (/db/" + r.key + " is empty)")
@@ -248,6 +305,9 @@
       key: key, label: label,
       count: t.status === "ok" ? count(t.rows) : 0,
       status: t.status,
+      /* The URL travels to the UI so a failed read can be diagnosed from a
+         screenshot instead of from a guess. */
+      url: t.url || null,
       note: t.status === "ok" ? ""
           : t.status === "empty" ? "none in this model"
           : t.status === "absent" ? "table key not recognised by this build (plugin bug)"
@@ -258,7 +318,8 @@
   var api = {
     CORE: CORE, PROBES: PROBES, FORCE_UNITS: FORCE_UNITS, DIST_UNITS: DIST_UNITS,
     readModel: readModel, probe: probe, structureGroups: structureGroups,
-    stages: stages, units: units, summarise: summarise
+    stages: stages, units: units, summarise: summarise,
+    numberList: numberList, GROUP_ELEM_KEYS: GROUP_ELEM_KEYS
   };
   if (typeof module === "object" && module.exports) module.exports = api;
   root.CfModel = api;

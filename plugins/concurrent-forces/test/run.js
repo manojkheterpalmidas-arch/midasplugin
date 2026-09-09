@@ -27,6 +27,7 @@ const Conc = require(path.join(JS, "concurrent.js"));
 const Report = require(path.join(JS, "report.js"));
 const Model = require(path.join(JS, "model.js"));
 const Run = require(path.join(JS, "run.js"));
+const ChartM = require(path.join(JS, "chart.js"));
 const mock = require(path.join(__dirname, "..", "mock-midas", "server.js"));
 
 const PORT = 8781;
@@ -715,6 +716,116 @@ async function raw(mapi, opts) {
   }
 
   /* ==================================================================== */
+  section("the API base is settled, not assumed");
+  {
+    /* The failure this exists to stop: the host's redirectTo does not carry the
+       program segment, /mapikey/verify sits OUTSIDE that segment so the
+       connection check passes, and then EVERY /db/ read answers 404 — which is
+       honestly reported as "the plugin used a wrong table key", once per table,
+       for the whole model. */
+    eq(MapiM.baseCandidates("https://x.com:443/civil").join(" "),
+      "https://x.com:443/civil https://x.com:443",
+      "a base with the program segment is tried as given first");
+    eq(MapiM.baseCandidates("https://x.com:443/").join(" "),
+      "https://x.com:443 https://x.com:443/civil",
+      "a base without it gets the segment appended as the second candidate");
+
+    const bare = new MapiM.Mapi({ key: "mock-key", base: `http://localhost:${PORT}` });
+    /* verify() passes on the WRONG base, which is exactly why it cannot be the
+       thing that settles it. */
+    const v = await bare.verify();
+    eq(v.status, "connected", "verify succeeds even on a base with no program segment");
+    const probeBad = await bare.db("ELEM");
+    eq(probeBad.status, "absent", "and every table read 404s from there");
+    ok(/answered 404/.test(probeBad.reason || ""),
+      "the failure carries the URL that was actually requested", probeBad.reason);
+
+    const res = await bare.resolveBase("ELEM");
+    eq(res.base, BASE, "resolveBase recovers the working base");
+    eq(res.changed, true, "and reports that it had to change it");
+    eq(bare.base, BASE, "the client is left pointing at the working base");
+    eq((await bare.db("ELEM")).status, "ok", "so the model reads");
+
+    const good = new MapiM.Mapi({ key: "mock-key", base: BASE });
+    const res2 = await good.resolveBase("ELEM");
+    eq(res2.changed, false, "a base that already works is left alone");
+
+    const nowhere = new MapiM.Mapi({ key: "mock-key", base: `http://localhost:${PORT}/nope` });
+    const res3 = await nowhere.resolveBase("ELEM");
+    eq(res3.resolved, false, "when nothing answers it says so");
+    eq(nowhere.base, `http://localhost:${PORT}/nope`,
+      "and keeps the host's own base rather than inventing one");
+  }
+
+  /* ==================================================================== */
+  section("structure groups are read tolerantly and reported honestly");
+  {
+    const groups = ctx.model.groups;
+    ok(groups.length >= 4, "the model's groups are read", String(groups.length));
+    const deck = groups.find((g) => g.name === "Deck");
+    eq(deck.elements.length, 12, "a group's element list is read");
+    eq(deck.elementKey, "E_LIST", "and the key it came from is recorded");
+
+    /* The key is not worth betting the picker on: a group reading as empty
+       because its list arrived under an unexpected name is indistinguishable,
+       in the UI, from a group that really is empty. */
+    const odd = Model.structureGroups({ status: "ok", rows: {
+      1: { NAME: "Alt key", ELIST: [4, 5, 6] },
+      2: { NAME: "String list", E_LIST: "7 8 9to11" },
+      3: { NAME: "Nodes only", N_LIST: [1, 2], E_LIST: [] },
+      4: { NAME: "Unknown shape", MYSTERY: 1 }
+    } });
+    eq(odd.find((g) => g.name === "Alt key").elements.join(","), "4,5,6",
+      "an element list under another name is still found");
+    eq(odd.find((g) => g.name === "String list").elements.join(","), "7,8,9,10,11",
+      "a list given as text, ranges included, is parsed");
+    eq(odd.length, 4, "every group is offered, empty ones included");
+    ok(/node\(s\) only/.test(odd.find((g) => g.name === "Nodes only").note),
+      "a node-only group says so rather than vanishing");
+    ok(/no element list under any name/.test(odd.find((g) => g.name === "Unknown shape").note),
+      "and an unrecognised record lists the keys it does carry",
+      odd.find((g) => g.name === "Unknown shape").note);
+  }
+
+  /* ==================================================================== */
+  section("the distribution chart");
+  {
+    const doc = staticRun.report;
+    const spec = ChartM.buildChart(doc, "Moment-y", { width: 900, height: 220 });
+    eq(spec.empty, false, "a chart is produced");
+    eq(spec.bars.length, doc.rows.length, "one bar per reported row");
+    eq(spec.bars.filter((b) => b.isKey).length, 2,
+      "the key element's bars are marked (both parts)");
+    ok(spec.bars.some((b) => b.isGoverning), "and the governing row is identified");
+
+    /* Bars hang off the zero line in the right direction: this is a signed
+       concurrent value, and a chart that drew magnitudes would hide the very
+       thing the plugin exists to show. */
+    const neg = spec.bars.filter((b) => !b.missing && b.value < 0);
+    const pos = spec.bars.filter((b) => !b.missing && b.value > 0);
+    ok(neg.length && pos.length, "the fixture has both senses");
+    ok(neg.every((b) => Math.abs(b.y - spec.zeroY) < 0.001),
+      "negative bars start at the zero line and hang below it");
+    ok(pos.every((b) => b.y + b.h <= spec.zeroY + 0.001),
+      "positive bars end at the zero line");
+    ok(spec.ticks.some((t) => Math.abs(t.value) < 1e-12), "a zero gridline is drawn");
+
+    /* A truss carries no moment. Those cells are ABSENT, not zero, and the
+       chart must skip them rather than draw a bar at zero. */
+    const mixed = await analyse(ctx, {
+      setText: "1, 2, 21, 22", keyElemKey: undefined, keyElemText: "1",
+      componentId: "Fx", criterion: "max", position: "both",
+      selection: ["ULS_Comb_01"] });
+    const trussChart = ChartM.buildChart(mixed.report, "Moment-z", { width: 600, height: 200 });
+    ok(trussChart.missing > 0, "rows with no value in that column are counted");
+    eq(trussChart.bars.filter((b) => b.missing).length, trussChart.missing,
+      "and drawn as nothing rather than as zero");
+
+    eq(ChartM.buildChart(doc, "NoSuchColumn", {}).empty, true,
+      "an unknown column produces an empty spec, not a crash");
+  }
+
+  /* ==================================================================== */
   section("window shell");
   /* STRUCTURAL, because the close button is the most-broken part of a CIVIL NX
      plugin and every one of these failures shipped on a real one. */
@@ -748,6 +859,23 @@ async function raw(mapi, opts) {
       "yieldToUi uses MessageChannel — setTimeout is clamped to 1s when hidden");
     ok(/function runChunked\(/.test(app) && /runChunked\(doc\.rows/.test(app),
       "and the result table, which scales with the model, is built through it");
+
+    /* Inside CIVIL NX the host supplies the endpoint and the key, so the row
+       offering them is hidden by default and shown only when there is no key on
+       the query string. A key is a credential and is never rendered. */
+    ok(/id="conn-row"[^>]*\shidden/.test(html),
+      "the endpoint and key row is hidden by default");
+    ok(/\$\("conn-row"\)\.hidden = !!hostKey/.test(app),
+      "and is revealed only when the host supplied no key");
+    ok(!/key-print/.test(html) && !/key-print/.test(app),
+      "the key is not displayed at all, not even as a fingerprint");
+    ok(/type="password"/.test(html), "the development key field is masked");
+
+    /* The chart is built from a spec and rendered as NODES. An element label or
+       a load name must never be able to become markup. */
+    ok(/createElementNS/.test(app), "the chart is built from SVG nodes");
+    ok(!/innerHTML/.test(app), "nothing in the wiring assigns innerHTML");
+    ok(/chart\.js/.test(html), "the chart module ships");
 
     /* The run control must not sit in a panel that any option can hide. */
     const foot = /<footer class="run-foot">[\s\S]*?<\/footer>/.exec(html);

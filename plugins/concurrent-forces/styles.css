@@ -40,6 +40,12 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute loses to any rule that sets `display`, and this sheet
+   sets `display: flex` on .row — so a row marked hidden in the markup renders
+   anyway. Every toggled element here uses the attribute, so the guard goes in
+   one place rather than being remembered at each of them. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -374,3 +380,118 @@ details summary {
   width: auto;
 }
 .row .check { flex: 0 0 auto; }
+
+/* ==========================================================================
+   v1.1 — the verdict, the chart, the export bar
+   ========================================================================== */
+
+.status-row { display: flex; align-items: flex-start; gap: 12px; }
+.status-row .hint { margin: 0; flex: 1 1 auto; }
+.status-row .btn { flex: 0 0 auto; }
+
+.mono-small {
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+/* The one number the reader came for, said once and said large. A header block
+   of twelve equal-weight rows makes them hunt for it. */
+.verdict {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.verdict-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+.verdict-label {
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--ink-soft);
+  flex: 0 0 100%;
+}
+.verdict-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.verdict-where { font-size: 12px; color: var(--ink-soft); }
+.verdict-resolved {
+  flex: 1 1 100%;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+
+/* --------------------------------------------------------------- the chart */
+
+.chart-block { margin: 0 0 14px; }
+.chart-caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-weight: 650;
+  padding-bottom: 6px;
+}
+.chart-caption select { flex: 0 1 220px; }
+.chart-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 4px 2px;
+}
+#chart { display: block; max-width: 100%; }
+
+.ch-grid { stroke: var(--line); stroke-width: 1; }
+.ch-zero { stroke: var(--ink-soft); stroke-width: 1; }
+.ch-tick {
+  fill: var(--ink-soft);
+  font-size: 10px;
+  text-anchor: end;
+  font-variant-numeric: tabular-nums;
+}
+.ch-xlabel { fill: var(--ink-soft); font-size: 9px; text-anchor: middle; }
+.ch-key-label { fill: var(--accent); font-weight: 700; }
+.ch-bar { fill: var(--accent); opacity: .55; }
+.ch-bar.ch-neg { fill: var(--warn); opacity: .55; }
+/* The key element is the reason every other bar has the value it has, so it is
+   the one bar that must be findable at a glance. */
+.ch-bar.ch-key { opacity: 1; stroke: var(--ink); stroke-width: 1; }
+
+/* ---------------------------------------------------------- the export bar */
+
+.export-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  margin-top: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.export-bar .hint { margin: 0; }
+
+/* Keep the result header readable while the rows scroll past it. */
+.grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+}
+.grid tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+.grid tbody tr.key-row td { background: var(--ok-bg); font-weight: 600; }

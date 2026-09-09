@@ -1,6 +1,6 @@
 # Concurrent Forces — MIDAS CIVIL NX
 
-**v1.0.0 · non-mutating**
+**v1.1.0 · non-mutating**
 
 Reports the **coexistent** forces across a set of elements. You nominate one
 *key element* and one force component; the plugin finds the load case,
@@ -89,7 +89,7 @@ definition order wins, and every tie is reported in the results header.
 
 ## Running it
 
-Inside CIVIL NX: install `dist/Concurrent Forces v1.0.0.zip` from the Plug-in
+Inside CIVIL NX: install `dist/Concurrent Forces v1.1.0.zip` from the Plug-in
 menu, open it, fill the panel top to bottom, press **Find concurrent forces**.
 
 Without CIVIL NX:
@@ -103,16 +103,16 @@ Serve over **HTTP, not `file://`** — a `file://` page can serve a stale snapsh
 of some scripts while refreshing others, so UI changes appear to do nothing.
 
 ```bash
-node test/run.js      # 160 assertions, no CIVIL NX needed
+node test/run.js      # 198 assertions, no CIVIL NX needed
 ```
 
 Repackage after a change:
 
 ```bash
-node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.0.0.zip"
+node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.1.0.zip"
 # on Windows, equivalently:
-..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.0.0.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.0.0.zip"
+..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.1.0.zip"
+..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.1.0.zip"
 ```
 
 ## What is where
@@ -126,10 +126,53 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.0.
 | `js/elements.js` | the element set — parsing, namespaces, type routing, column lookup |
 | `js/concurrent.js` | join keys, the governing row, the concurrent filter |
 | `js/report.js` | one neutral document; the table and the CSV are walkers over it |
+| `js/chart.js` | the distribution chart, as a spec — no DOM, no markup |
 | `js/run.js` | the data flow, with the network injected |
 | `js/app.js` | wiring only — no logic |
 | `mock-midas/server.js` | the API and the static files from one process |
 | `test/run.js` | the offline suite |
+
+## What changed in v1.1.0
+
+**The API base is settled by probing, not assumed.** This was a real failure on
+a live model, and it failed in the most misleading way available: the host's
+`redirectTo` did not carry the program segment (`/civil`), `/mapikey/verify`
+sits *outside* that segment so the connection check passed, and then every
+single `/db/` read answered 404 — which the client honestly reports as *"the
+plugin used a wrong table key"*, once per table, for the whole model. One probe
+read of `/db/ELEM` now settles which base actually serves the API before
+anything else is read, and the panel says so when it had to change it.
+
+Every read result also carries the URL it requested, so a failed read can be
+diagnosed from a screenshot rather than from a guess.
+
+**Structure groups are read tolerantly and listed honestly.** The element list
+is looked for under every plausible key and parsed whether it arrives as an
+array or as text with ranges. Every group is offered, empty ones included, with
+the reason on the row — a group silently missing from the picker is exactly what
+gets reported as *"it is not reading my groups"*. **Replace** joins **Add**, and
+a pick that adds nothing says why instead of doing nothing.
+
+**The endpoint and key are no longer shown.** Inside CIVIL NX the host supplies
+both on the query string, so there is nothing to decide; the row appears only
+when no key was supplied — that is, when the page is being driven from a plain
+browser for development. The key is never rendered, not even as a fingerprint.
+The resolved endpoint moved into *What was read from the model*, where it is
+diagnostics rather than a control.
+
+**A distribution chart.** One component's value along the set at the governing
+state, signed, with the key element highlighted and any component selectable.
+It is built from a spec in `js/chart.js` and rendered as SVG *nodes* — an
+element label or a load name can never become markup. Rows with no value in a
+column (a truss has no moment) are counted and skipped rather than drawn at
+zero.
+
+**Export made plain:** *Download CSV*, *Copy CSV* and *Show as text* side by
+side under the table, each reporting what actually happened rather than claiming
+a save or a copy that may not have occurred.
+
+**Fixed:** an element marked `hidden` in the markup rendered anyway wherever the
+stylesheet set `display` on it — the connection row among them.
 
 ## Verified, and not
 

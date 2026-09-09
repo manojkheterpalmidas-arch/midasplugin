@@ -81,21 +81,81 @@
    */
   Mapi.prototype.db = async function (key) {
     this.calls++;
-    var r = await fetch(this.base + "/db/" + key, { headers: { "MAPI-Key": this.key } });
+    var url = this.base + "/db/" + key;
+    var r = await fetch(url, { headers: { "MAPI-Key": this.key } });
     var text = await r.text();
     this.bytes += text.length;
 
     var body = null;
     try { body = JSON.parse(text); } catch (e) { /* left null */ }
 
-    if (r.status === 404) return { rows: null, status: "absent", reason: "no such table key" };
-    if (!body) return { rows: null, status: "error", reason: "unparseable response" };
-    if (body.error) {
-      return { rows: null, status: "error", reason: errText(body.error) };
+    /* The URL travels with the result. When a read fails, the single most
+       useful thing a user can tell you is what was actually requested — and a
+       whole model reading "absent" is nearly always one wrong base, not
+       forty-seven wrong table keys. */
+    if (r.status === 404) {
+      return { rows: null, status: "absent", url: url, reason: "GET " + url + " answered 404" };
     }
-    if (body[key] && typeof body[key] === "object") return { rows: body[key], status: "ok" };
-    if (body.message === "") return { rows: null, status: "empty" };
-    return { rows: null, status: "empty", reason: JSON.stringify(body).slice(0, 200) };
+    if (!body) return { rows: null, status: "error", url: url, reason: "GET " + url + " did not return JSON (" + r.status + ")" };
+    if (body.error) {
+      return { rows: null, status: "error", url: url, reason: errText(body.error) };
+    }
+    if (body[key] && typeof body[key] === "object") return { rows: body[key], status: "ok", url: url };
+    if (body.message === "") return { rows: null, status: "empty", url: url };
+    return { rows: null, status: "empty", url: url, reason: JSON.stringify(body).slice(0, 200) };
+  };
+
+  /* -------------------------------------------------------- base resolution */
+
+  /**
+   * Candidate base URLs, in the order they should be tried.
+   *
+   * The host hands the plugin its base as ?redirectTo=. Whether that base
+   * carries the PROGRAM SEGMENT (/civil) is not something a plugin can assume,
+   * and getting it wrong fails in a way that reads like a plugin bug rather
+   * than a URL problem: /mapikey/verify sits OUTSIDE the segment, so the
+   * connection check passes either way, and then EVERY /db/ read answers 404 —
+   * which db() correctly reports as "the plugin used a wrong table key",
+   * forty-seven times over.
+   */
+  function baseCandidates(base) {
+    var b = String(base || "").replace(/\/+$/, "");
+    var out = [b];
+    if (!/\/(civil|gen|fea)$/i.test(b)) out.push(b + "/civil");
+    else out.push(b.replace(/\/(civil|gen|fea)$/i, ""));
+    return out;
+  }
+
+  /**
+   * Settle which base actually serves /db/, by reading one table that every
+   * structural model has.
+   *
+   * A candidate is right unless it answers 404. Empty (200 {"message":""}) means
+   * the base is right and the model holds none of that kind; an `error` means
+   * the base is right and something else is wrong — a dead session, say — and
+   * trying further bases would only bury it.
+   *
+   * @returns {{base, tried, changed, resolved}}
+   */
+  Mapi.prototype.resolveBase = async function (probeKey) {
+    probeKey = probeKey || "ELEM";
+    var cands = baseCandidates(this.base);
+    var given = cands[0];
+    var tried = [];
+
+    for (var i = 0; i < cands.length; i++) {
+      this.base = cands[i];
+      var r = await this.db(probeKey);
+      tried.push({ base: cands[i], status: r.status });
+      if (r.status !== "absent") {
+        this.base = cands[i];
+        return { base: cands[i], tried: tried, changed: cands[i] !== given, resolved: true };
+      }
+    }
+    /* Nothing answered. Keep the host's own base — it is the honest default —
+       and let the caller report what was tried. */
+    this.base = given;
+    return { base: given, tried: tried, changed: false, resolved: false };
   };
 
   /** Read several tables concurrently. */
@@ -352,7 +412,8 @@
     DEFAULT_BASE: DEFAULT_BASE,
     ALLOWED_POST: ALLOWED_POST,
     baseFromLocation: baseFromLocation,
-    keyFromLocation: keyFromLocation
+    keyFromLocation: keyFromLocation,
+    baseCandidates: baseCandidates
   };
 
   if (typeof module === "object" && module.exports) module.exports = api;

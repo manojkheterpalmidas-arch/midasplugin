@@ -14,6 +14,7 @@
   var Conc = root.CfConcurrent;
   var Report = root.CfReport;
   var Run = root.CfRun;
+  var Chart = root.CfChart;
 
   var S = {
     mapi: null, connected: false, model: null, loadModel: null,
@@ -124,26 +125,38 @@
     badge.textContent = text;
   }
 
-  function fingerprint(key) {
-    if (!key) return "—";
-    return key.length <= 8 ? "••••" : key.slice(0, 4) + "…" + key.slice(-4);
-  }
-
   async function connect() {
     /* The host supplies both on the query string. A remembered base must never
-       override ?redirectTo=. */
-    var key = Mapi.keyFromLocation(location.search) || $("in-key").value.trim();
-    var base = Mapi.baseFromLocation(location.search);
-    $("in-base").value = base;
-    $("key-print").textContent = fingerprint(key);
+       override ?redirectTo=. Neither is shown when the host supplied them —
+       there is nothing for the user to decide, and a key is a credential. */
+    var hostKey = Mapi.keyFromLocation(location.search);
+    var key = hostKey || ($("in-key").value || "").trim();
+    var base = hostKey ? Mapi.baseFromLocation(location.search)
+                       : (($("in-base").value || "").trim() || Mapi.baseFromLocation(location.search));
 
-    if (!key) { setStatus("warn", "No MAPI key"); return; }
+    if (!key) {
+      setStatus("warn", "No MAPI key");
+      $("model-line").textContent = "No MAPI key was supplied. Inside CIVIL NX the " +
+        "host provides one; outside it, paste one above.";
+      return;
+    }
 
     setStatus("neutral", "Connecting…");
     clearError();
     S.mapi = new Mapi.Mapi({ key: key, base: base });
     try {
       var info = await S.mapi.verify();
+
+      /* SETTLE THE BASE BEFORE READING ANYTHING. Whether the host's redirectTo
+         carries the program segment (/civil) is not something to assume, and
+         guessing wrong fails in the most misleading way available:
+         /mapikey/verify sits outside the segment so the connection check passes,
+         and then every single /db/ read answers 404 — which is honestly
+         reported as "the plugin used a wrong table key", once per table, for a
+         whole model. One probe read settles it. */
+      progress("Locating the API", 0);
+      S.baseInfo = await S.mapi.resolveBase("ELEM");
+
       S.connected = true;
       setStatus("ok", "Connected · " + (info.program || "civil"));
       await loadModel();
@@ -228,23 +241,59 @@
       tr.appendChild(cell(row.status === "ok" ? String(row.count) : "—", "num"));
       /* "not read" and "not in this build" are distinguished from a real zero.
          A tick over an empty population is a lie. */
-      tr.appendChild(cell(row.note || "read", "note"));
+      var note = cell(row.note || "read", "note");
+      if (row.url) note.title = row.url;
+      tr.appendChild(note);
       tbody.appendChild(tr);
     });
-    var u = S.model.units;
-    $("model-line").textContent =
-      "Units " + u.FORCE + ", " + u.DIST + " — " + u.source + ". " +
-      (S.model.stages.length ? S.model.stages.length + " construction stage(s). " : "") +
-      (S.model.probes.GENLINK.rows ? Object.keys(S.model.probes.GENLINK.rows).length +
-        " general link(s) at /db/" + S.model.probes.GENLINK.key + "." : "No general links.");
+
+    var b = S.baseInfo || {};
+    $("endpoint-line").textContent = "Endpoint: " + S.mapi.base +
+      (b.changed ? "  (the host gave " + b.tried[0].base + ", which answered 404 — the " +
+        "program segment was missing, so it was added)" : "") +
+      (b.resolved === false ? "  — NOTHING answered here: tried " +
+        b.tried.map(function (t) { return t.base; }).join(" and ") : "");
+
+    var elems = S.model.tables.ELEM;
+    var groups = S.model.groups;
+    var withElems = groups.filter(function (g) { return g.elements.length; }).length;
+
+    var parts = [];
+    if (elems.status !== "ok") {
+      /* The headline case: if elements did not read, nothing below it will, and
+         saying so once is worth more than forty-seven identical rows. */
+      parts.push("The element table did not read (" + (elems.reason || elems.status) +
+        "). Nothing else in this panel can be trusted until that is fixed.");
+    } else {
+      parts.push(Object.keys(elems.rows).length + " elements.");
+      parts.push(groups.length
+        ? groups.length + " structure group(s), " + withElems + " with elements."
+        : "No structure groups in this model.");
+    }
+    parts.push("Units " + S.model.units.FORCE + ", " + S.model.units.DIST +
+      " — " + S.model.units.source + ".");
+    if (S.model.stages.length) parts.push(S.model.stages.length + " construction stage(s).");
+    parts.push(S.model.probes.GENLINK.rows
+      ? Object.keys(S.model.probes.GENLINK.rows).length + " general link(s) at /db/" +
+        S.model.probes.GENLINK.key + "."
+      : "No general links.");
+    $("model-line").textContent = parts.join(" ");
   }
 
   function renderGroups() {
     var sel = $("in-group");
     sel.textContent = "";
-    sel.appendChild(option("", "—"));
+    sel.appendChild(option("", S.model.groups.length
+      ? "— choose one of " + S.model.groups.length + " —"
+      : "— no structure groups in this model —"));
     S.model.groups.forEach(function (g) {
-      sel.appendChild(option(g.name, g.name + " (" + g.elements.length + ")"));
+      /* Every group is listed, empty ones included, with the reason on the
+         option. A group quietly missing from this list is what gets reported
+         as "it is not reading my groups". */
+      var o = option(g.name, g.name + " (" + g.elements.length + " element" +
+        (g.elements.length === 1 ? "" : "s") + ")");
+      if (g.note) o.title = g.note;
+      sel.appendChild(o);
     });
   }
 
@@ -458,6 +507,20 @@
   /* ----------------------------------------------------------------- report */
 
   async function renderResult(doc) {
+    /* The one number the user came for, said once and said large, before the
+       supporting detail. A header block of twelve equal-weight rows makes the
+       reader hunt for it. */
+    var govValue = doc.header.filter(function (h) { return h.label === "Governing value"; })[0];
+    var govLoad = doc.header.filter(function (h) { return h.label === "Governing load"; })[0];
+    var stage = doc.header.filter(function (h) { return h.label === "Stage / step"; })[0];
+    var resolved = doc.header.filter(function (h) { return h.label === "Resolved"; })[0];
+    $("verdict-value").textContent = govValue ? govValue.value : "";
+    $("verdict-where").textContent = "at element " + doc.meta.keyElemKey +
+      " · " + doc.meta.component + " · " + (govLoad ? govLoad.value : "") +
+      (stage && /^[^n]/.test(stage.value) ? " · " + stage.value : "");
+    $("verdict-resolved").textContent = resolved ? resolved.value : "";
+    $("verdict-resolved").hidden = !resolved;
+
     var head = $("result-head");
     head.textContent = "";
     doc.header.forEach(function (h) {
@@ -511,9 +574,17 @@
       });
     });
 
+    /* The chart is offered per component, defaulting to the one that governed. */
+    var plottable = doc.columns.filter(function (c) { return c.kind === "number"; });
+    fill($("chart-component"), plottable.map(function (c) {
+      return { value: c.id, label: c.label };
+    }));
+    $("chart-component").value = doc.meta.component;
+    drawChart(doc, doc.meta.component);
+
     S.csv = Report.toCsv(doc);
     $("csv-text").value = S.csv;
-    $("csv-line").textContent = "";
+    $("csv-line").textContent = doc.rows.length + " rows ready to export.";
     $("csv-block").hidden = true;
     $("csv-block").open = false;
 
@@ -521,6 +592,76 @@
     results.hidden = false;
     /* An action whose only effect is off-screen reads as broken. */
     results.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /* ------------------------------------------------------------------ chart */
+
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function svgEl(name, attrs) {
+    var el = document.createElementNS(SVGNS, name);
+    Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  /** Render the spec chart.js computed. Nodes, never markup — an element label
+   *  or a load name must not be able to become HTML. */
+  function drawChart(doc, columnId) {
+    var svg = $("chart");
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    var width = Math.max(360, (svg.parentNode.clientWidth || 900) - 4);
+    var spec = Chart.buildChart(doc, columnId, { width: width, height: 220 });
+    var col = doc.columns.filter(function (c) { return c.id === columnId; })[0];
+
+    if (spec.empty) {
+      $("chart-note").textContent = "Nothing to plot: " + spec.reason + ".";
+      svg.setAttribute("viewBox", "0 0 10 10");
+      svg.setAttribute("height", "0");
+      return;
+    }
+
+    svg.setAttribute("viewBox", "0 0 " + spec.width + " " + spec.height);
+    svg.setAttribute("width", String(spec.width));
+    svg.setAttribute("height", String(spec.height));
+    svg.setAttribute("aria-label", "Concurrent " + (col ? col.label : columnId) +
+      " across the element set at the governing state");
+
+    /* Gridlines and value labels. */
+    spec.ticks.forEach(function (t) {
+      svg.appendChild(svgEl("line", {
+        x1: spec.plot.x, x2: spec.plot.x + spec.plot.w, y1: t.y, y2: t.y,
+        "class": Math.abs(t.value) < 1e-12 ? "ch-zero" : "ch-grid"
+      }));
+      var label = svgEl("text", { x: spec.plot.x - 8, y: t.y + 4, "class": "ch-tick" });
+      label.textContent = Conc.formatValue(t.value);
+      svg.appendChild(label);
+    });
+
+    spec.bars.forEach(function (b, i) {
+      if (!b.missing) {
+        var cls = "ch-bar" + (b.isKey ? " ch-key" : "") + (b.negative ? " ch-neg" : "");
+        var rect = svgEl("rect", { x: b.x, y: b.y, width: b.w, height: b.h, "class": cls });
+        var title = svgEl("title");
+        title.textContent = b.label + ": " + Conc.formatValue(b.value) +
+          (b.isKey ? "  (key element)" : "");
+        rect.appendChild(title);
+        svg.appendChild(rect);
+      }
+      if (i % spec.labelEvery === 0) {
+        var t = svgEl("text", {
+          x: b.x + b.w / 2, y: spec.height - 8,
+          "class": "ch-xlabel" + (b.isKey ? " ch-key-label" : "")
+        });
+        t.textContent = b.label;
+        svg.appendChild(t);
+      }
+    });
+
+    $("chart-note").textContent =
+      "Every bar is the value at the SAME structural state — not each element's " +
+      "own extreme. The key element is highlighted." +
+      (spec.missing ? "  " + spec.missing + " of " + spec.count + " rows carry no " +
+        "value in this column and are not drawn." : "");
   }
 
   /* Whether the host window permits a download is UNVERIFIED, so the export
@@ -550,6 +691,21 @@
       : "This host window would not start a download. Use Show as text and copy " +
         "from the box below.";
     if (!saved) showCsvText();
+  }
+
+  /** Copy to the clipboard, and report what ACTUALLY happened — a claimed copy
+   *  that silently failed is worse than no button. */
+  async function copyCsv() {
+    if (!S.csv) return;
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard API");
+      await navigator.clipboard.writeText(S.csv);
+      $("csv-line").textContent = "Copied " + S.csv.length + " characters to the clipboard.";
+    } catch (e) {
+      $("csv-line").textContent = "The clipboard was not available here (" +
+        (e.message || e) + "). The text is selected below — copy it by hand.";
+      showCsvText();
+    }
   }
 
   function showCsvText() {
@@ -641,9 +797,17 @@
   function init() {
     wireHost();
     $("btn-connect").addEventListener("click", connect);
+    $("btn-connect-dev").addEventListener("click", connect);
     $("btn-run").addEventListener("click", run);
     $("btn-csv").addEventListener("click", exportCsv);
+    $("btn-csv-copy").addEventListener("click", copyCsv);
     $("btn-csv-show").addEventListener("click", showCsvText);
+    $("chart-component").addEventListener("change", function () {
+      if (S.result) drawChart(S.result.report, $("chart-component").value);
+    });
+    root.addEventListener("resize", function () {
+      if (S.result) drawChart(S.result.report, $("chart-component").value);
+    });
     $("btn-none").addEventListener("click", function () {
       S.selection = Object.create(null);
       renderCases();
@@ -654,21 +818,39 @@
     $("in-set").addEventListener("input", describeSet);
     $("in-set").addEventListener("blur", validateKeyElement);
     $("in-key-elem").addEventListener("blur", validateKeyElement);
-    $("btn-group-add").addEventListener("click", function () {
-      var name = $("in-group").value;
-      if (!name || !S.model) return;
-      var g = S.model.groups.filter(function (x) { return x.name === name; })[0];
-      if (!g || !g.elements.length) return;
-      var cur = $("in-set").value.trim();
-      $("in-set").value = (cur ? cur + ", " : "") + g.elements.join(", ");
-      describeSet();
-      validateKeyElement();
-    });
+    $("btn-group-add").addEventListener("click", function () { addGroup(false); });
+    $("btn-group-replace").addEventListener("click", function () { addGroup(true); });
 
-    $("in-base").value = Mapi.baseFromLocation(location.search);
-    $("key-print").textContent = fingerprint(Mapi.keyFromLocation(location.search));
-    /* Connect on load when the host supplied a key; otherwise wait. */
-    if (Mapi.keyFromLocation(location.search)) connect();
+    /* The endpoint and key row exists only for the plain-browser case. Inside
+       CIVIL NX the host supplies both and there is nothing to decide. */
+    var hostKey = Mapi.keyFromLocation(location.search);
+    $("conn-row").hidden = !!hostKey;
+    if (!hostKey) $("in-base").value = Mapi.baseFromLocation(location.search);
+    if (hostKey) connect();
+  }
+
+  /** Put a structure group's elements into the set, and say what happened when
+   *  nothing does — a button that silently no-ops reads as a broken plugin. */
+  function addGroup(replace) {
+    var name = $("in-group").value;
+    var line = $("set-line");
+    if (!name || !S.model) {
+      line.textContent = "Choose a structure group first.";
+      line.className = "hint bad-text";
+      return;
+    }
+    var g = S.model.groups.filter(function (x) { return x.name === name; })[0];
+    if (!g) return;
+    if (!g.elements.length) {
+      line.textContent = "\"" + g.name + "\" added nothing: " +
+        (g.note || "it holds no elements") + ".";
+      line.className = "hint bad-text";
+      return;
+    }
+    var cur = replace ? "" : $("in-set").value.trim();
+    $("in-set").value = (cur ? cur + ", " : "") + g.elements.join(", ");
+    describeSet();
+    validateKeyElement();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

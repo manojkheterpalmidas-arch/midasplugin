@@ -28,7 +28,7 @@
       <img src="./icon.svg" alt="" class="brand-icon">
       <div>
         <h1>Concurrent Forces</h1>
-        <p>MIDAS CIVIL NX &middot; v1.0.0</p>
+        <p>MIDAS CIVIL NX &middot; v1.1.0</p>
       </div>
     </div>
     <div class="head-actions">
@@ -56,23 +56,32 @@
     <p id="error-hint" class="error-hint" hidden></p>
   </section>
 
-  <!-- 0 ------------------------------------------------------- connection -->
+  <!-- 0 ------------------------------------------------------- connection --
+       Inside CIVIL NX the host supplies the endpoint and the key on the query
+       string, so offering them as fields is noise on every single run. The row
+       below appears ONLY when the host supplied no key — that is, when the page
+       is being driven from a plain browser for development. -->
   <section class="panel compact">
-    <div class="row">
+    <div class="row" id="conn-row" hidden>
       <span class="field-label">Endpoint</span>
-      <input id="in-base" type="text" readonly
-             title="Supplied by the host as ?redirectTo=. A remembered value never overrides it.">
-      <span class="field-label">Key</span>
-      <span id="key-print" class="fingerprint" title="A fingerprint of the MAPI key. The key itself is a credential and is not displayed.">—</span>
-      <input id="in-key" type="password" placeholder="paste a key when running outside CIVIL NX" class="grow">
-      <button id="btn-connect" class="btn" type="button">Refresh</button>
+      <input id="in-base" type="text" class="grow"
+             title="Supplied by the host as ?redirectTo= when running inside CIVIL NX. A remembered value never overrides it.">
+      <span class="field-label">MAPI key</span>
+      <input id="in-key" type="password" class="grow"
+             placeholder="paste a key when running outside CIVIL NX">
+      <button id="btn-connect-dev" class="btn" type="button">Connect</button>
     </div>
-    <p id="model-line" class="hint">
-      CIVIL NX must be open, and the model analysed. A key keeps verifying after
-      the program closes, so the live session is checked too.
-    </p>
+    <div class="status-row">
+      <p id="model-line" class="hint grow">
+        CIVIL NX must be open, and the model analysed. A key keeps verifying
+        after the program closes, so the live session is checked too.
+      </p>
+      <button id="btn-connect" class="btn ghost" type="button"
+              title="Re-verify the session and re-read the model">Refresh</button>
+    </div>
     <details id="model-detail">
       <summary>What was read from the model</summary>
+      <p id="endpoint-line" class="hint mono-small"></p>
       <div class="table-wrap">
         <table class="grid">
           <thead><tr><th>Table</th><th class="num">Records</th><th>Provenance</th></tr></thead>
@@ -94,6 +103,7 @@
         <option value="">—</option>
       </select>
       <button id="btn-group-add" class="btn" type="button" title="Append that group's elements to the set">Add</button>
+      <button id="btn-group-replace" class="btn ghost" type="button" title="Replace the set with that group's elements">Replace</button>
       <!-- The host contract is a query string in and two window messages out
            (REQ_WND_MOVE, REQ_EXIT). There is no selection channel, so this
            cannot be wired; saying so beats a button that does nothing. -->
@@ -184,17 +194,41 @@
   <!-- 8 --------------------------------------------------------- results -->
   <section id="results" class="panel" hidden>
     <h2>Concurrent forces</h2>
+    <div class="verdict">
+      <div class="verdict-main">
+        <span class="verdict-label">Governing value at the key element</span>
+        <span id="verdict-value" class="verdict-value"></span>
+        <span id="verdict-where" class="verdict-where"></span>
+      </div>
+      <div id="verdict-resolved" class="verdict-resolved" hidden></div>
+    </div>
     <dl id="result-head" class="head-block"></dl>
     <ul id="result-notes" class="notes"></ul>
+
+    <figure class="chart-block">
+      <figcaption class="chart-caption">
+        <span id="chart-title">Concurrent distribution across the set</span>
+        <label class="field-label" for="chart-component">Plot</label>
+        <select id="chart-component"></select>
+      </figcaption>
+      <div class="chart-wrap"><svg id="chart" role="img"></svg></div>
+      <p id="chart-note" class="hint tight"></p>
+    </figure>
+
     <div class="table-wrap">
       <table class="grid" id="result-table">
         <thead><tr id="result-head-row"></tr></thead>
         <tbody id="result-body"></tbody>
       </table>
     </div>
-    <div class="row">
-      <button id="btn-csv" class="btn" type="button">Export CSV</button>
-      <button id="btn-csv-show" class="btn ghost" type="button">Show as text</button>
+    <div class="export-bar">
+      <span class="field-label">Concurrent force set</span>
+      <button id="btn-csv" class="btn" type="button"
+              title="Download the table above as CSV, header block included as comment lines">Download CSV</button>
+      <button id="btn-csv-copy" class="btn" type="button"
+              title="Copy the same CSV to the clipboard">Copy CSV</button>
+      <button id="btn-csv-show" class="btn ghost" type="button"
+              title="Show the CSV in a box you can select and copy by hand">Show as text</button>
       <span id="csv-line" class="hint"></span>
     </div>
     <details id="csv-block" hidden>
@@ -222,6 +256,7 @@
 <script src="./js/elements.js"></script>
 <script src="./js/concurrent.js"></script>
 <script src="./js/report.js"></script>
+<script src="./js/chart.js"></script>
 <script src="./js/model.js"></script>
 <script src="./js/run.js"></script>
 <script src="./js/app.js"></script>

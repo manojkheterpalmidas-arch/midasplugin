@@ -71,28 +71,83 @@
     var yOf = function (v) { return PAD.top + (hi - v) / span * plotH; };
     var zeroY = yOf(0);
 
-    var bars = points.map(function (p, i) {
-      var x = PAD.left + i * step + (step - barW) / 2;
-      if (p.value == null) {
-        return { x: x, w: barW, missing: true, label: p.label, reason: p.reason,
-                 isKey: p.isKey, isGoverning: p.isGoverning };
-      }
-      var y = yOf(Math.max(p.value, 0));
-      var h = Math.max(1, Math.abs(yOf(p.value) - zeroY));
-      return {
-        x: x, y: y, w: barW, h: h, value: p.value, label: p.label,
-        isKey: p.isKey, isGoverning: p.isGoverning, negative: p.value < 0
-      };
-    });
+    /* MORE ROWS THAN PIXELS. At one bar per row a 4180-row set over 1180px
+       gives each bar 0.28px of space and a 2px minimum width — so every bar
+       overlaps its seven neighbours, the translucent fills stack into a solid
+       shape, and the density on screen means nothing at all. Below about
+       1.5px per row the chart becomes a MIN-MAX BAND: one column per pixel,
+       spanning the true range of the rows that fall in it. Nothing is hidden
+       and nothing is invented; the caption says which mode is in use. */
+    var dense = step < 1.5;
+    var bars = dense ? denseBars() : plainBars();
+
+    function plainBars() {
+      return points.map(function (p, i) {
+        var x = PAD.left + i * step + (step - barW) / 2;
+        if (p.value == null) {
+          return { x: x, w: barW, missing: true, label: p.label, reason: p.reason,
+                   isKey: p.isKey, isGoverning: p.isGoverning };
+        }
+        var y = yOf(Math.max(p.value, 0));
+        var h = Math.max(1, Math.abs(yOf(p.value) - zeroY));
+        return {
+          x: x, y: y, w: barW, h: h, value: p.value, label: p.label,
+          isKey: p.isKey, isGoverning: p.isGoverning, negative: p.value < 0
+        };
+      });
+    }
+
+    function denseBars() {
+      var cols = Math.max(1, Math.floor(plotW));
+      var buckets = new Array(cols);
+      points.forEach(function (p, i) {
+        var c = Math.min(cols - 1, Math.floor(i / points.length * cols));
+        var b = buckets[c] || (buckets[c] = {
+          lo: Infinity, hi: -Infinity, n: 0, isKey: false, isGoverning: false,
+          first: p.label, last: p.label
+        });
+        b.last = p.label;
+        b.isKey = b.isKey || p.isKey;
+        b.isGoverning = b.isGoverning || p.isGoverning;
+        if (p.value == null) return;
+        b.n++;
+        if (p.value < b.lo) b.lo = p.value;
+        if (p.value > b.hi) b.hi = p.value;
+      });
+
+      var out = [];
+      buckets.forEach(function (b, c) {
+        if (!b) return;
+        var x = PAD.left + c;
+        if (!b.n) {
+          out.push({ x: x, w: 1, missing: true, label: b.first,
+                     reason: "no value in this column", isKey: b.isKey });
+          return;
+        }
+        /* The band always reaches the zero line, so a column that is entirely
+           positive still reads as a bar rising from zero rather than as a
+           floating segment. */
+        var top = yOf(Math.max(b.hi, 0));
+        var bottom = yOf(Math.min(b.lo, 0));
+        out.push({
+          x: x, y: top, w: 1, h: Math.max(1, bottom - top),
+          value: Math.abs(b.hi) >= Math.abs(b.lo) ? b.hi : b.lo,
+          lo: b.lo, hi: b.hi, count: b.n,
+          label: b.first === b.last ? b.first : b.first + " … " + b.last,
+          isKey: b.isKey, isGoverning: b.isGoverning, negative: b.hi <= 0
+        });
+      });
+      return out;
+    }
 
     return {
-      empty: false, width: width, height: height,
+      empty: false, width: width, height: height, dense: dense,
       plot: { x: PAD.left, y: PAD.top, w: plotW, h: plotH },
       zeroY: zeroY, bars: bars, min: lo, max: hi,
       ticks: ticksFor(lo, hi, yOf),
       /* Only some x labels fit. Pick a stride that keeps them readable rather
          than drawing 440 overlapping strings. */
-      labelEvery: Math.max(1, Math.ceil(points.length / Math.floor(plotW / 46))),
+      labelEvery: Math.max(1, Math.ceil(bars.length / Math.floor(plotW / 84))),
       missing: points.filter(function (p) { return p.value == null; }).length,
       count: points.length
     };

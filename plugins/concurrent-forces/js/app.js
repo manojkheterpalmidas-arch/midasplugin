@@ -25,7 +25,7 @@
   };
 
   /* Kept in step with manifest.json and the header line by the offline suite. */
-  var VERSION = "1.3.0";
+  var VERSION = "1.4.0";
 
   function $(id) { return document.getElementById(id); }
 
@@ -689,8 +689,11 @@
         var cls = "ch-bar" + (b.isKey ? " ch-key" : "") + (b.negative ? " ch-neg" : "");
         var rect = svgEl("rect", { x: b.x, y: b.y, width: b.w, height: b.h, "class": cls });
         var title = svgEl("title");
-        title.textContent = b.label + ": " + Conc.formatValue(b.value) +
-          (b.isKey ? "  (key element)" : "");
+        title.textContent = b.count > 1
+          ? b.label + ": " + b.count + " rows, " + Conc.formatValue(b.lo) +
+            " to " + Conc.formatValue(b.hi) + (b.isKey ? "  (includes the key item)" : "")
+          : b.label + ": " + Conc.formatValue(b.value) +
+            (b.isKey ? "  (key item)" : "");
         rect.appendChild(title);
         svg.appendChild(rect);
       }
@@ -705,8 +708,14 @@
     });
 
     $("chart-note").textContent =
-      "Every bar is the value at the SAME structural state — not each element's " +
-      "own extreme. The key element is highlighted." +
+      "Every bar is the value at the SAME structural state — not each item's own " +
+      "extreme. The key item is highlighted." +
+      (spec.dense
+        ? "  " + spec.count + " rows is more than there are pixels, so each column " +
+          "spans the full range of the rows that fall in it — hover for the count " +
+          "and the range. Rows follow the order you entered the set, which is not " +
+          "distance along the structure."
+        : "  Rows follow the order you entered the set.") +
       (spec.missing ? "  " + spec.missing + " of " + spec.count + " rows carry no " +
         "value in this column and are not drawn." : "");
   }

@@ -77,6 +77,16 @@ Every line here cost someone real time. Read before shipping.
       sending; the readback will not tell you.
 - [ ] Table `HEAD` columns are found **by name** — `No.`/`Node`/`Elem` differ per
       table.
+- [ ] A component column that the `HEAD` does not contain is **surfaced**, not
+      left optional. Its values read `undefined`, every row is skipped, and the
+      run reports "no result row found" for a table that answered fully.
+- [ ] A header carrying its unit — `Moment-y (kN*m)` — still matches. Match on
+      the raw header with a boundary check, or `Fx` claims a plate's `Fxx`.
+- [ ] `Number("")` is **0**. A blank in a numeric column must not arrive as a
+      real, plottable, exportable zero — it is indistinguishable from a measured
+      one.
+- [ ] Part tokens are `I[100]` / `1/4` / `J[101]`, **not** `Part I`. A bare
+      `I`/`J` filter excludes every row in the table. See `result-tables.md`.
 - [ ] Node result tokens carry the coordinate suffix: `REACTIONG`,
       `DISPLACEMENTG`.
 - [ ] Construction-stage and non-CS series are requested in **separate calls**.

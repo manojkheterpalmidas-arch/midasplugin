@@ -59,7 +59,9 @@ const state = {
   headerUnits: false,
   dropColumn: null,
   blankColumn: null,
-  partLabels: null
+  partLabels: null,
+  /* Output points between the ends, as a model with them saved reports. */
+  quarterPoints: false
 };
 
 /* ------------------------------------------------------------------ model -- */
@@ -420,13 +422,16 @@ const TOKENS = {
      GENERALLINKFORCE, the way it would have to on a build that spells it
      differently. A wrong token is not obviously wrong — it answers with the
      "creating utbl" message, which reads like an un-analysed model. */
-  BEAMFORCE: { group: "BEAM", item: "Elem", comps: COMPONENTS, parts: ["Part I", "Part J"] },
-  TRUSSFORCE: { group: "TRUSS", item: "Elem", comps: ["Axial"], parts: ["Part I", "Part J"],
+  BEAMFORCE: { group: "BEAM", item: "Elem", comps: COMPONENTS,
+               partsOf: (id) => memberParts(ELEMS[String(id)]) },
+  TRUSSFORCE: { group: "TRUSS", item: "Elem", comps: ["Axial"],
+                partsOf: (id) => memberParts(ELEMS[String(id)]),
                 /* The truss table names its one force column "Force", so a
                    plugin indexing by position or by the literal "Axial" fails
                    here rather than in front of a user. */
                 rename: { "Axial": "Force" } },
-  GENERALLINKFORCE: { group: "GENLINK", item: "No.", comps: COMPONENTS, parts: ["Part I", "Part J"] },
+  GENERALLINKFORCE: { group: "GENLINK", item: "No.", comps: COMPONENTS,
+                      partsOf: (id) => memberParts(GENLINKS[String(id)]) },
   /* The elastic link and plate tables report at NODES, not at an I and a J
      end — so their part column is called "Node" and carries node numbers. A
      plugin that filters those rows on an I/J output position throws every one
@@ -443,6 +448,18 @@ const TOKENS = {
                only: (id) => !!SUPPORTS[String(id)] },
   DISPLACEMENTG: { group: "DISPLACEMENT", item: "Node", comps: DISP_COMPS, parts: null }
 };
+
+/* THE PART TOKENS A MEMBER-FORCE TABLE ACTUALLY CARRIES, measured on a live
+   CIVIL NX 2026 model: the end tokens carry their NODE — "I[100]", "J[101]" —
+   and the intermediate output points are fractions. Not the bare "Part I" that
+   this once assumed, which is why the mock speaks the real vocabulary: an I/J
+   output-position filter that cannot read these excludes every row in the
+   table, and no amount of testing against a polite fixture finds it. */
+function memberParts(row) {
+  const nodes = (row && row.NODE) || [0, 0];
+  const ends = ["I[" + nodes[0] + "]", "J[" + nodes[1] + "]"];
+  return state.quarterPoints ? [ends[0], "1/4", "2/4", "3/4", ends[1]] : ends;
+}
 
 function elementsOfGroup(group, keys) {
   return keys.filter((k) => {
@@ -485,7 +502,7 @@ function buildTable(spec, keys, seriesIn, optCs, stageStep, unit) {
   const DATA = [];
   ids.forEach((id) => {
     const parts = partCol
-      ? (spec.partsOf ? spec.partsOf(id) : (state.partLabels || spec.parts))
+      ? (state.partLabels || (spec.partsOf ? spec.partsOf(id) : spec.parts))
       : [null];
     seriesIn.forEach((p) => {
       stepsFor(p, stageStep).forEach((ss) => {
@@ -656,5 +673,5 @@ module.exports = {
   server, state, TABLES, CASES, COMBOS, STAGES, TOKENS,
   valueOf, envelopeValued, addressable, parseSeries, responseLabel,
   publishedSeries, elementsOfGroup, FORCE_FACTOR, DIST_FACTOR, COMPONENTS,
-  ELINKS, SUPPORTS, NODES, unitScale, UNIT_KIND
+  ELINKS, SUPPORTS, NODES, unitScale, UNIT_KIND, memberParts
 };

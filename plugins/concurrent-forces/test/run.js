@@ -84,6 +84,12 @@ async function throws(fn) {
   try { await fn(); return null; } catch (e) { return e; }
 }
 
+/* The part tokens a member-force table really carries: the ends name their
+   NODE. The suite uses these rather than a tidy "Part I" so that a filter that
+   cannot read them fails here instead of on a real model. */
+const partI = (elem, table) => "I[" + ((table || mock.TABLES.ELEM)[String(elem)].NODE[0]) + "]";
+const partJ = (elem, table) => "J[" + ((table || mock.TABLES.ELEM)[String(elem)].NODE[1]) + "]";
+
 /** One value straight from the API, with no plugin code between. */
 async function raw(mapi, opts) {
   const t = await mapi.postTable({
@@ -248,7 +254,7 @@ async function raw(mapi, opts) {
     /* And it must actually be the maximum over everything queried. */
     const all = [];
     for (const c of ["DL", "SDL", "LL", "WIND", "TEMP"]) {
-      for (const part of ["Part I", "Part J"]) {
+      for (const part of [partI(3), partJ(3)]) {
         all.push(await raw(ctx.mapi, { elem: 3, part, column: "Moment-y", series: c + "(ST)" }));
       }
     }
@@ -256,15 +262,28 @@ async function raw(mapi, opts) {
 
     /* Every other element is reported AT THAT SAME STATE, not at its own extreme. */
     const other = await raw(ctx.mapi, {
-      elem: 6, part: "Part I", column: "Shear-z", series: gov.row.load + "(ST)" });
-    const reported = staticRun.rows.find((r) => r.elemKey === "6" && r.part === "Part I");
+      elem: 6, part: partI(6), column: "Shear-z", series: gov.row.load + "(ST)" });
+    const reported = staticRun.rows.find((r) => r.elemKey === "6" && r.part === partI(6));
     near(reported.values["Shear-z"], other,
       "element 6's shear is the COEXISTENT value at the governing load");
 
-    const ownMax = Math.max(...await Promise.all(["DL", "SDL", "LL", "WIND", "TEMP"].map((c) =>
-      raw(ctx.mapi, { elem: 6, part: "Part I", column: "Shear-z", series: c + "(ST)" }))));
-    ok(reported.values["Shear-z"] !== ownMax,
-      "and it is NOT element 6's own independent extreme — which is the whole point");
+    /* Somewhere in the set an element's coexistent value must differ from its
+       own independent maximum — that difference IS the plugin. Searched rather
+       than pinned to one element, so the check cannot pass on a coincidence. */
+    let differs = null;
+    for (const e of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      if (String(e) === "3") continue;                    /* the key element */
+      const here = staticRun.rows.find((r) => r.elemKey === String(e) && r.part === partI(e));
+      if (!here) continue;
+      const own = Math.max(...await Promise.all(["DL", "SDL", "LL", "WIND", "TEMP"].map((c) =>
+        raw(ctx.mapi, { elem: e, part: partI(e), column: "Shear-z", series: c + "(ST)" }))));
+      if (Math.abs(here.values["Shear-z"] - own) > 1e-9) {
+        differs = { elem: e, coexistent: here.values["Shear-z"], own: own };
+        break;
+      }
+    }
+    ok(differs, "at least one element's coexistent value is NOT its own independent " +
+      "extreme — which is the whole point", JSON.stringify(differs));
 
     eq(staticRun.rows.map((r) => r.elemKey).filter((v, i, a) => a.indexOf(v) === i).join(","),
       "1,2,3,4,5,6,7,8", "rows are sorted in the order the user entered the set");
@@ -343,17 +362,25 @@ async function raw(mapi, opts) {
 
     /* THE TRAP: re-reading the envelope's own name at another element gives
        that element's independent extreme, not the coexistent value. */
-    const elem7 = out.rows.find((r) => r.elemKey === "7" && r.part === "Part I");
-    const trueValue = await raw(ctx.mapi, {
-      elem: 7, part: "Part I", column: "Moment-y",
-      series: out.state.resolvedName + "(CB)" });
-    near(elem7.values["Moment-y"], trueValue,
-      "element 7 is reported at the RESOLVED child");
-    const naive = await raw(ctx.mapi, {
-      elem: 7, part: "Part I", column: "Moment-y", series: "ULS_Env(CB:max)" });
-    ok(Math.abs(naive - trueValue) > 1e-6,
-      "and re-reading ULS_Env by name at element 7 would have given a different, " +
-      "physically impossible number");
+    /* THE TRAP, searched for rather than assumed at one element: re-reading the
+       envelope's own name elsewhere returns THAT element's independent extreme.
+       Where the governing child happens to govern there too the two agree, so
+       the test looks for an element where they do not — and there must be one,
+       or the envelope would have no reason to exist. */
+    let trap = null;
+    for (const e of [1, 2, 4, 5, 6, 7, 8]) {
+      const resolved = await raw(ctx.mapi, {
+        elem: e, part: partI(e), column: "Moment-y",
+        series: out.state.resolvedName + "(CB)" });
+      const naive = await raw(ctx.mapi, {
+        elem: e, part: partI(e), column: "Moment-y", series: "ULS_Env(CB:max)" });
+      const row = out.rows.find((r) => r.elemKey === String(e) && r.part === partI(e));
+      if (row) near(row.values["Moment-y"], resolved,
+        "element " + e + " is reported at the RESOLVED child");
+      if (Math.abs(naive - resolved) > 1e-6) { trap = { elem: e, naive, resolved }; break; }
+    }
+    ok(trap, "and at least one element where re-reading ULS_Env by name would have " +
+      "given a different, physically impossible number", JSON.stringify(trap));
   }
 
   /* ==================================================================== */
@@ -450,7 +477,7 @@ async function raw(mapi, opts) {
       const vals = [];
       for (const st of steps) {
         const [stage, step] = st.split(":");
-        for (const part of ["Part I", "Part J"]) {
+        for (const part of [partI(4), partJ(4)]) {
           vals.push({ st, part, v: await raw(ctx.mapi, {
             elem: 4, part, column: comp.column, series: "Erection(CS)",
             optCs: true, stageStep: st, step }) });
@@ -584,8 +611,8 @@ async function raw(mapi, opts) {
     near(imp.governing.value, metric.governing.value * kipsPerKn * ftPerM,
       "the moment scales by force × length", 1e-6);
 
-    const mForce = metric.rows.find((r) => r.elemKey === "3" && r.part === "Part I").values["Axial"];
-    const iForce = imp.rows.find((r) => r.elemKey === "3" && r.part === "Part I").values["Axial"];
+    const mForce = metric.rows.find((r) => r.elemKey === "3" && r.part === partI(3)).values["Axial"];
+    const iForce = imp.rows.find((r) => r.elemKey === "3" && r.part === partI(3)).values["Axial"];
     near(iForce, mForce * kipsPerKn, "and an axial force scales by force alone", 1e-6);
 
     ok(/kips/.test(imp.report.header.find((h) => h.label === "Units").value),
@@ -756,9 +783,9 @@ async function raw(mapi, opts) {
     near(govN.value, rawN, "the governing reaction matches the API's own number");
 
     /* Every element in the set is reported AT THE STATE THE REACTION PICKED. */
-    const beamRow = byReaction.rows.find((r) => r.elemKey === "2" && r.part === "Part I");
+    const beamRow = byReaction.rows.find((r) => r.elemKey === "2" && r.part === partI(2));
     const coex = await raw(ctx.mapi, {
-      elem: 2, part: "Part I", column: "Moment-y", series: govN.row.load + "(ST)" });
+      elem: 2, part: partI(2), column: "Moment-y", series: govN.row.load + "(ST)" });
     near(beamRow.values["Moment-y"], coex,
       "a beam moment coexisting with the governing reaction");
     ok(byReaction.rows.every((r) => r.key === byReaction.key),
@@ -865,10 +892,102 @@ async function raw(mapi, opts) {
     near(sRow.values.RX, mRow.values.RX,
       "and a rotation does not scale at all — it is already dimensionless", 1e-9);
 
-    const mMoment = metric.rows.find((r) => r.source === "BEAM" && r.part === "Part I");
-    const sMoment = small.rows.find((r) => r.source === "BEAM" && r.part === "Part I");
+    const mMoment = metric.rows.find((r) => r.source === "BEAM" && r.part === partI(1));
+    const sMoment = small.rows.find((r) => r.source === "BEAM" && r.part === partI(1));
     near(sMoment.values["Moment-y"], mMoment.values["Moment-y"] * 1000 * 1000,
       "a member moment scales with FORCE x LENGTH", 1e-6);
+  }
+
+  /* ==================================================================== */
+  section("output points — the real part vocabulary");
+  {
+    /* MEASURED ON A LIVE MODEL: a member-force table's end tokens carry their
+       NODE — "I[100]", "J[101]" — and intermediate output points are fractions.
+       "Part I" was an assumption, and it cost a whole run: every row failed the
+       I/J filter, the position quietly stood down, and 836 elements came back
+       at five output points where two were asked for. */
+    eq(Conc.normPart("I[100]"), "I", "an end token carrying its node normalises to I");
+    eq(Conc.normPart("J[101]"), "J", "and to J");
+    eq(Conc.normPart("Part I"), "I", "the bare form still works");
+    eq(Conc.normPart("1/4"), "1/4", "a quarter point is not an end and keeps its token");
+    ok(Conc.partAllowed("I[100]", "both", true, "ij"),
+      "so an I/J output position accepts it");
+    ok(!Conc.partAllowed("1/4", "both", true, "ij"),
+      "and Both ends excludes the intermediate points");
+
+    /* The order a diagram is drawn in: I, 1/4, 2/4, 3/4, J. Ranking every
+       unrecognised token the same made the sort a no-op, and the right order
+       survived only because Array.sort is stable. */
+    eq(["J[101]", "2/4", "I[100]", "3/4", "1/4"]
+      .sort((a, b) => Conc.partRank(a) - Conc.partRank(b)).join(" "),
+      "I[100] 1/4 2/4 3/4 J[101]", "output points sort along the member");
+    ok(Conc.partRank("2") > Conc.partRank("J[9]"),
+      "a plate's node-numbered part still sorts after the ends");
+
+    /* End to end, with the intermediate points switched on. */
+    mock.state.quarterPoints = true;
+    const both = await analyse(ctx, {
+      setText: "1to4", keyItemText: "2", effectId: "BEAM:Moment-y",
+      criterion: "max", position: "both", selection: ["DL", "SDL", "LL"] });
+    const all = await analyse(ctx, {
+      setText: "1to4", keyItemText: "2", effectId: "BEAM:Moment-y",
+      criterion: "max", position: "all", selection: ["DL", "SDL", "LL"] });
+    mock.state.quarterPoints = false;
+
+    eq(both.rows.length, 8, "Both ends gives two rows per element, not five");
+    eq(all.rows.length, 20, "All output points gives five");
+    ok(!both.warnings.some((w) => /output position was ignored/.test(w)),
+      "and the position no longer has to stand down",
+      JSON.stringify(both.warnings));
+    eq(both.rows.filter((r) => r.elemKey === "1").map((r) => r.part).join(","),
+      partI(1) + "," + partJ(1), "the two ends, in order");
+    eq(all.rows.filter((r) => r.elemKey === "1").map((r) => r.part).join(","),
+      [partI(1), "1/4", "2/4", "3/4", partJ(1)].join(","),
+      "and all five in order along the member");
+  }
+
+  /* ==================================================================== */
+  section("the chart when there are more rows than pixels");
+  {
+    /* 836 elements at five output points is 4180 rows. Drawn one bar per row
+       across 1180px each bar gets 0.28px of space and a 2px minimum width, so
+       every bar overlaps its seven neighbours and the translucent fills stack
+       into a solid shape whose density means nothing. */
+    const wide = { columns: [
+      { id: "item", kind: "text" }, { id: "type", kind: "text" },
+      { id: "part", kind: "text" }, { id: "Moment-y", kind: "number" }], rows: [] };
+    for (let i = 0; i < 4180; i++) {
+      wide.rows.push({ cells: [{ text: "e" + i, value: "e" + i }, { text: "beam" },
+        { text: "I" }, { text: "x", value: Math.sin(i / 40) * 4.8 }],
+        isKey: i === 9, emphasis: i === 9 ? "Moment-y" : null });
+    }
+    const dense = ChartM.buildChart(wide, "Moment-y", { width: 1180, height: 220 });
+    eq(dense.dense, true, "it switches to a min-max band");
+    ok(dense.bars.length < 1180, "one column per pixel at most",
+      String(dense.bars.length));
+    ok(dense.bars.every((b) => b.w <= 1), "so no column overlaps its neighbour");
+    eq(dense.bars.filter((b) => b.isKey).length, 1,
+      "and the key item's column is still findable");
+    const band = dense.bars.find((b) => b.count > 1);
+    ok(band && band.lo < band.hi, "a column spans the true range of its rows",
+      JSON.stringify(band && { lo: band.lo, hi: band.hi, n: band.count }));
+    ok(dense.bars.every((b) => b.missing || (b.y <= dense.zeroY + 0.001 &&
+      b.y + b.h >= dense.zeroY - 0.001)),
+      "every band still reaches the zero line, so nothing floats");
+
+    /* Nothing is hidden: the extremes of the whole series survive the band. */
+    const values = wide.rows.map((r) => r.cells[3].value);
+    const bandMax = Math.max(...dense.bars.filter((b) => !b.missing).map((b) => b.hi));
+    const bandMin = Math.min(...dense.bars.filter((b) => !b.missing).map((b) => b.lo));
+    near(bandMax, Math.max(...values), "the series maximum survives downsampling");
+    near(bandMin, Math.min(...values), "and the minimum");
+
+    /* A set small enough to draw honestly still draws one bar per row. */
+    const small = ChartM.buildChart(
+      { columns: wide.columns, rows: wide.rows.slice(0, 40) },
+      "Moment-y", { width: 1180, height: 220 });
+    eq(small.dense, false, "a small set is not downsampled");
+    eq(small.bars.length, 40, "one bar per row");
   }
 
   /* ==================================================================== */
@@ -1116,9 +1235,9 @@ async function raw(mapi, opts) {
     eq(beam.token, "BEAMFORCE", "the token it settled on is recorded");
     ok(beam.head.length > 5, "the HEAD it returned is recorded", beam.head.join(","));
     eq(beam.missing.length, 0, "and which columns were not recognised");
-    eq(beam.parts.join(","), "Part I,Part J",
+    eq(beam.parts.join(","), partI(beam.item) + "," + partJ(beam.item),
       "the PART TOKENS are recorded — the one thing that decides whether an " +
-      "output position filter works at all");
+      "output position filter works at all", beam.parts.join(","));
     ok(beam.sample, "with a sample row, so the values can be sanity-checked");
     ok(beam.series.length > 10, "and what the model publishes");
 
@@ -1162,7 +1281,7 @@ async function raw(mapi, opts) {
       generated: "2026-01-01T00:00:00Z"
     });
     ok(/BEAMFORCE/.test(text), "the report names the tokens");
-    ok(/Part I/.test(text), "and the part tokens");
+    ok(/"I\[/.test(text), "and the part tokens");
     ok(/HEAD/.test(text), "and the HEAD");
     ok(/something went wrong/.test(text), "and the last error");
     ok(/bSV_STEP/.test(text), "and which stages saved steps");

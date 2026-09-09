@@ -1,6 +1,6 @@
 # Concurrent Forces — MIDAS CIVIL NX
 
-**v1.3.0 · non-mutating**
+**v1.4.0 · non-mutating**
 
 Reports the **coexistent** results across a set of items. You nominate one *key
 item* and one *result quantity*; the plugin finds the load case, combination,
@@ -127,7 +127,7 @@ definition order wins, and every tie is reported in the results header.
 
 ## Running it
 
-Inside CIVIL NX: install `dist/Concurrent Forces v1.3.0.zip` from the Plug-in
+Inside CIVIL NX: install `dist/Concurrent Forces v1.4.0.zip` from the Plug-in
 menu, open it, fill the panel top to bottom, press **Find concurrent forces**.
 
 Without CIVIL NX:
@@ -141,16 +141,16 @@ Serve over **HTTP, not `file://`** — a `file://` page can serve a stale snapsh
 of some scripts while refreshing others, so UI changes appear to do nothing.
 
 ```bash
-node test/run.js      # 269 assertions, no CIVIL NX needed
+node test/run.js      # 292 assertions, no CIVIL NX needed
 ```
 
 Repackage after a change:
 
 ```bash
-node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.3.0.zip"
+node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.4.0.zip"
 # on Windows, equivalently:
-..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.3.0.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.3.0.zip"
+..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.4.0.zip"
+..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.4.0.zip"
 ```
 
 ## What is where
@@ -170,6 +170,34 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.3.
 | `js/app.js` | wiring only — no logic |
 | `mock-midas/server.js` | the API and the static files from one process |
 | `test/run.js` | the offline suite |
+
+## What changed in v1.4.0
+
+**The Part column's tokens carry the node.** Measured on a live model: a
+member-force table reports at `I[100]`, `1/4`, `2/4`, `3/4`, `J[101]` — not the
+`Part I` / `Part J` this had assumed. The cost of that assumption was total: a
+bare `I`/`J` filter matched **nothing**, so *Both ends* excluded every row in
+the table, the output position quietly stood down (v1.2.1's fallback), and a
+run over 836 elements came back at five output points where two were asked for.
+The ordering was equally broken — every unrecognised token ranked the same, so
+the part sort was a no-op and the right order survived only because
+`Array.sort` is stable.
+
+Ends now normalise with the node suffix optional, and the intermediate points
+rank **between** them, so a member reads I, 1/4, 2/4, 3/4, J — the order a
+diagram is drawn in. The mock speaks the real vocabulary now, so the whole
+suite exercises it.
+
+**The chart no longer draws more bars than there are pixels.** 4180 rows across
+1180 px gave each bar 0.28 px of space against a 2 px minimum width, so every
+bar overlapped its seven neighbours and the translucent fills stacked into a
+solid shape whose density meant nothing. Above about one row per pixel the
+chart becomes a **min–max band**: one column per pixel, spanning the true range
+of the rows in it, extremes preserved, hover giving the count and the range.
+The caption says which mode is in use.
+
+Neither of these changed a reported number — the values were right — but
+together they made a correct answer look like a wrong one.
 
 ## What changed in v1.3.0
 

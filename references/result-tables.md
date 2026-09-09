@@ -54,6 +54,40 @@ Other tokens confirmed in use: `ELASTICLINK`, `BEAMFORCE`, `PLATEFORCE`,
 argument shape tried against an **un**analysed model — unverified against an
 analysed one).
 
+## The Part column's tokens carry the node
+
+Measured on a live CIVIL NX 2026 grillage, September 2026. A member-force
+table's output positions are **not** `Part I` / `Part J`:
+
+```
+I[100]   1/4   2/4   3/4   J[101]
+```
+
+The end tokens carry the **node number** of that end, and the intermediate
+output points are **fractions**. A plugin that filters on a bare `I`/`J` — or
+sorts on one — matches nothing at all:
+
+- an "output position: both ends" filter excludes **every row in the table**,
+  and the run reports "no result row found" for a table that answered fully;
+- an ordering that ranks unrecognised tokens equally becomes a no-op, and the
+  right order survives only because `Array.sort` is stable and the API happens
+  to return the points in order.
+
+Normalise with the node suffix optional, and rank the fractions **between** the
+ends rather than after them:
+
+```js
+/^(?:part\s*)?([ij])\s*(?:\[\s*\d+\s*\])?$/i
+```
+
+How many points a member reports depends on the model's output-point setting:
+two ends only, or the ends plus quarter points. Do not assume two.
+
+Other tables use the part column for something else again — a **plate** reports
+at its nodes and an **elastic link** at its two node ids, so the column carries
+a node number and an I/J output position is meaningless there. Give each table
+its own idea of what a "part" is.
+
 ## HEAD key columns differ per table
 
 Never assume `Elem` / `Part`:

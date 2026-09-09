@@ -110,10 +110,22 @@
 
   /* ---------------------------------------------------------------- parts */
 
-  /** "Part I", "I", "i" all normalise to "I"; anything else keeps its token. */
+  /**
+   * The member-end token, normalised to "I" or "J".
+   *
+   * MEASURED ON A LIVE CIVIL NX 2026 MODEL: the beam force table's Part column
+   * carries the END NODE with it — `I[100]`, `1/4`, `2/4`, `3/4`, `J[101]` —
+   * not the bare "Part I"/"Part J" that this once assumed. Getting it wrong is
+   * not a cosmetic fault: every row fails an I/J output-position filter, and a
+   * run over 836 elements comes back either empty or, once the filter stands
+   * down, at five output points where two were asked for.
+   *
+   * Anything that is not an end — a quarter point, a plate's node number —
+   * keeps its own token.
+   */
   function normPart(part) {
     var s = String(part == null ? "" : part).trim();
-    var m = /^(?:part\s*)?([ij])$/i.exec(s);
+    var m = /^(?:part\s*)?([ij])\s*(?:\[\s*\d+\s*\])?$/i.exec(s);
     return m ? m[1].toUpperCase() : s;
   }
 
@@ -227,12 +239,30 @@
     return out;
   }
 
+  /**
+   * Where along the member an output point sits, so the report reads I, 1/4,
+   * 2/4, 3/4, J — the order an engineer draws a diagram in.
+   *
+   * The intermediate points come back as fractions ("1/4"), so they rank
+   * between the two ends rather than after them. Ranking every unrecognised
+   * token the same was a silent fault: the sort became a no-op and the right
+   * order survived only because Array.sort is stable and the API happened to
+   * return them in order.
+   */
   function partRank(part) {
     var p = normPart(part);
     if (p === "I") return 0;
     if (p === "J") return 1;
+    var frac = /^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/.exec(p);
+    if (frac) {
+      var v = Number(frac[1]) / Number(frac[2]);
+      if (isFinite(v)) return v;
+    }
     var n = Number(p);
-    return isFinite(n) ? 2 + n : 999;
+    if (!isFinite(n)) return 999;
+    /* A bare fraction between the ends sorts between them; anything else — a
+       plate's node number, say — sorts after, in numeric order. */
+    return (n > 0 && n < 1) ? n : 2 + n;
   }
 
   /* ------------------------------------------------------- composed states */

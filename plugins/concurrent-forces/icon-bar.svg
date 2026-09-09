@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"
+     role="img" aria-label="Concurrent Forces">
+  <title>Concurrent Forces</title>
+  <!--
+    THE CONTROLLER-BAR GLYPH. A different asset from icon.svg on purpose.
+
+    icon.svg is the plugin-LIST icon, and the estate's house style for that is a
+    black tile with a bright frame. Rendered at 12px on the plugin's own dark
+    title bar, a black tile is a black square on near-black: it loads perfectly
+    and is invisible. That gets reported as a missing icon.
+
+    So the bar gets its own asset: no tile, SOLID SHAPES ONLY (strokes go
+    sub-pixel at 12px), in the bar's ink colour. Internal detail is cut out with
+    a mask rather than painted in the bar colour, so the glyph stays correct if
+    the bar's shade ever changes.
+
+    Same subject as icon.svg: three members, one vertical cut through all of
+    them at the same structural state. Checked at 12px on #21272A.
+  -->
+  <mask id="barglyph">
+    <rect x="2.5" y="5.2" width="19" height="2.2" rx="1.1" fill="#fff"/>
+    <rect x="2.5" y="10.9" width="19" height="2.2" rx="1.1" fill="#fff"/>
+    <rect x="2.5" y="16.6" width="19" height="2.2" rx="1.1" fill="#fff"/>
+    <rect x="14.4" y="3" width="2.4" height="18" rx="1.2" fill="#fff"/>
+    <circle cx="15.6" cy="12" r="3.6" fill="#fff"/>
+    <circle cx="15.6" cy="12" r="1.5" fill="#000"/>
+  </mask>
+  <rect width="24" height="24" fill="#BDC2C8" mask="url(#barglyph)"/>
+</svg>

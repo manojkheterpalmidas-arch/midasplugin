@@ -128,6 +128,10 @@ unpacking in the host. Use `assets/scripts/pack.ps1`, which builds the archive
 entry by entry through .NET with the separators set explicitly, then
 `verify-zip.ps1` to prove the zip matches the source hash for hash.
 
+`assets/scripts/pack.js` is the same rules for a machine that is not Windows —
+same exclusions, same forward-slash separators, and it verifies the archive
+against the source hash for hash before it finishes. Node only, no dependencies.
+
 Files go at the **zip root** — `index.html` must be the top-level entry, not
 inside a folder.
 
@@ -149,6 +153,11 @@ Load these as needed; do not read them all up front.
 `assets/icon-frame.png` is the house icon frame, already embedded in the
 template's `icon.svg`. `references/images/` holds the diagrams the references
 link to.
+
+`plugins/concurrent-forces/` is a finished plugin built on all of the above —
+concurrent forces across an element set, with the envelope resolution, the
+blocking rules and the bulk-query pattern worked through end to end. Read it
+when an abstract rule here needs a worked example.
 
 ## Provenance
 

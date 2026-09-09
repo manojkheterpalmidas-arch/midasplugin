@@ -1,0 +1,799 @@
+/*
+ * Concurrent Forces — offline regression suite.
+ *
+ *   node test/run.js
+ *
+ * The shipped modules run against the mock over REAL HTTP, so the MAPI client,
+ * the HEAD parsing, the OPT_CS family split and the silent-drop behaviour are
+ * under test rather than stubbed. Nothing here needs CIVIL NX.
+ *
+ * Every test case named in the plugin's brief has a section below, and each one
+ * checks the plugin's answer against a number obtained INDEPENDENTLY from the
+ * mock rather than against the plugin's own arithmetic — otherwise a passing
+ * run is a tautology rather than a regression test.
+ *
+ * If every require() below comes back as an empty object, a PARENT folder's
+ * package.json says "type": "module" and the local one saying "commonjs" has
+ * gone missing. That is the cause, every time.
+ */
+const path = require("path");
+const fs = require("fs");
+
+const JS = path.join(__dirname, "..", "js");
+const MapiM = require(path.join(JS, "mapi.js"));
+const Combos = require(path.join(JS, "combos.js"));
+const El = require(path.join(JS, "elements.js"));
+const Conc = require(path.join(JS, "concurrent.js"));
+const Report = require(path.join(JS, "report.js"));
+const Model = require(path.join(JS, "model.js"));
+const Run = require(path.join(JS, "run.js"));
+const mock = require(path.join(__dirname, "..", "mock-midas", "server.js"));
+
+const PORT = 8781;
+const BASE = `http://localhost:${PORT}/civil`;
+
+let passed = 0, failed = 0;
+const failures = [];
+
+function ok(cond, what, detail) {
+  if (cond) passed++;
+  else {
+    failed++;
+    failures.push(what);
+    console.log("  FAIL  " + what + (detail ? "\n        " + detail : ""));
+  }
+}
+const eq = (a, b, what) => ok(a === b, what, `expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+const near = (a, b, what, rel) => ok(
+  a != null && b != null && Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b), 1e-12) * (rel || 1e-9),
+  what, `expected ${b}, got ${a}`);
+const section = (t) => console.log("\n— " + t);
+
+function newMapi(units) {
+  return new MapiM.Mapi({ key: "mock-key", base: BASE, unit: units || { FORCE: "kN", DIST: "m" } });
+}
+
+/** What app.js does on connect, without a DOM. */
+async function setup(units) {
+  const mapi = newMapi(units);
+  const model = await Model.readModel(mapi);
+  let published = await mapi.enumerateSeries({ token: "BEAMFORCE", keys: [1], unit: mapi.unit });
+  const firstStep = model.stages[0].steps[0].token;
+  published = published.concat(await mapi.enumerateSeries({
+    token: "BEAMFORCE", keys: [1], unit: mapi.unit, optCs: true, stageStep: firstStep
+  }));
+  const loadModel = Combos.buildLoadModel({
+    stld: model.tables.STLD.rows, combos: model.combos,
+    caseTables: model.caseTables, publishedLabels: published
+  });
+  return { mapi, model, loadModel };
+}
+
+function analyse(ctx, over) {
+  return Run.runAnalysis(Object.assign({
+    mapi: ctx.mapi, elems: ctx.model.elems, links: ctx.model.links,
+    loadModel: ctx.loadModel, componentId: "My", criterion: "max", position: "both",
+    units: ctx.mapi.unit, stageSteps: []
+  }, over));
+}
+
+async function throws(fn) {
+  try { await fn(); return null; } catch (e) { return e; }
+}
+
+/** One value straight from the API, with no plugin code between. */
+async function raw(mapi, opts) {
+  const t = await mapi.postTable({
+    token: opts.token || "BEAMFORCE", keys: [opts.elem], series: [opts.series],
+    optCs: opts.optCs, stageStep: opts.stageStep, unit: mapi.unit
+  });
+  if (!t) return null;
+  const ix = {};
+  t.HEAD.forEach((h, i) => { ix[h] = i; });
+  const row = t.DATA.find((d) =>
+    String(d[ix.Part]) === opts.part &&
+    (opts.step == null || String(d[ix.Step]) === opts.step));
+  return row ? Number(row[ix[opts.column]]) : null;
+}
+
+(async () => {
+  await new Promise((r) => mock.server.listen(PORT, r));
+
+  /* ==================================================================== */
+  section("connection and read semantics");
+  {
+    const mapi = newMapi();
+    const v = await mapi.verify();
+    eq(v.program, "civil", "verify reports the program");
+
+    /* A key keeps verifying after CIVIL NX closes. Checking keyVerified alone
+       reports a dead session as connected and falls over on the first read. */
+    mock.state.session = "disconnected";
+    const dead = await throws(() => mapi.verify());
+    ok(dead && /session is disconnected/i.test(dead.message),
+      "a valid key with a dead session is refused", dead && dead.message);
+    mock.state.session = "connected";
+
+    eq((await mapi.db("ELEM")).status, "ok", "a populated table reads ok");
+    eq((await mapi.db("LCOM-STEEL")).status, "empty",
+      "an unpopulated table is empty (200 message:\"\"), not absent");
+    eq((await mapi.db("GLNK")).status, "absent",
+      "an unknown table key is absent (404 — the plugin's bug, not the model's)");
+
+    const wl = await throws(() => mapi.post("/db/ELEM", { Assign: {} }, {}));
+    ok(wl && /not permitted to POST/i.test(wl.message),
+      "POST paths are whitelisted — this plugin may only reach /post/TABLE");
+    eq(MapiM.ALLOWED_POST.length, 1, "the whitelist is exactly one path");
+
+    const stripped = await mapi.post("/post/TABLE", {
+      Argument: {
+        TABLE_NAME: "cfp", TABLE_TYPE: "BEAMFORCE", UNIT: { FORCE: "kN", DIST: "m" },
+        NODE_ELEMS: { KEYS: [1] }, LOAD_CASE_NAMES: ["DL(ST)"],
+        EXPORT_PATH: "C:\\Users\\somebody\\leak.csv"
+      }
+    }, {});
+    ok(stripped && stripped.cfp, "EXPORT_PATH is stripped before every send");
+
+    const tok = await throws(() => mapi.postTable({ token: "NOSUCH", keys: [1], series: ["DL(ST)"] }));
+    ok(tok && /utbl/i.test(tok.message), "a token that does not exist is refused");
+  }
+
+  /* ==================================================================== */
+  section("model read — probes, units, stages");
+  const ctx = await setup();
+  {
+    eq(ctx.model.probes.GENLINK.key, "GENLINK",
+      "the general link table was FOUND BY PROBING past /db/GLNK, which 404s here");
+    eq(ctx.model.probes.MV.key, "MVLDBS", "the moving-load case table was located");
+    eq(ctx.model.units.FORCE, "kN", "the force unit came from the model");
+    eq(ctx.model.units.source, "read from the model", "and it says where it came from");
+    eq(ctx.model.stages.length, 3, "three construction stages");
+
+    /* STEP TOKENS FOLLOW bSV_STEP. Offering "first" where it is false produces
+       an empty table that reads like a missing analysis option. */
+    const cs1 = ctx.model.stages.find((s) => s.name === "CS1");
+    const cs2 = ctx.model.stages.find((s) => s.name === "CS2");
+    eq(cs1.steps.length, 1, "a stage that saved no steps offers only the last step");
+    eq(cs2.steps.length, 2, "a stage with bSV_STEP true offers first and last");
+
+    const lcom = ctx.model.summary.filter((r) => /^LCOM-/.test(r.key));
+    eq(lcom.length, 10, "all ten combination tables are read, not just LCOM-GEN");
+  }
+
+  /* ==================================================================== */
+  section("envelope-valuedness and addressing");
+  {
+    const m = ctx.loadModel;
+    eq(Combos.envelopeValued(m, "ULS_Comb_01"), false, "an Add of static cases is single-valued");
+    eq(Combos.envelopeValued(m, "ULS_Env"), true, "an Envelope is envelope-valued");
+    eq(Combos.envelopeValued(m, "Env_Sum"), true,
+      "envelope-valuedness PROPAGATES: an Add containing an Envelope is a max/min pair");
+    eq(Combos.envelopeValued(m, "MV_Top_L1"), true,
+      "and it propagates from a moving-load leaf three levels down");
+
+    eq(Combos.requestSeries(m, "ULS_Comb_01"), "ULS_Comb_01(CB)", "a single-valued Add takes (CB)");
+    eq(Combos.requestSeries(m, "ULS_Env", "max"), "ULS_Env(CB:max)", "an envelope needs a sense");
+    eq(Combos.requestSeries(m, "DL"), "DL(ST)", "a static case takes (ST)");
+    eq(Combos.requestSeries(m, "Erection"), "Erection(CS)", "a stage case takes (CS)");
+
+    /* Getting the suffix wrong is SILENCE, not an error. */
+    eq(await ctx.mapi.postTable({ token: "BEAMFORCE", keys: [1], series: ["ULS_Env(CB)"] }), null,
+      "an envelope addressed without a sense is dropped silently");
+    ok(await ctx.mapi.postTable({ token: "BEAMFORCE", keys: [1], series: ["ULS_Env(CB:max)"] }),
+      "the same envelope with a sense returns rows");
+    const mixed = await ctx.mapi.postTable({
+      token: "BEAMFORCE", keys: [1], series: ["ULS_Comb_01(CB)", "ULS_Env(CB)"] });
+    eq(new Set(mixed.DATA.map((d) => d[1])).size, 1,
+      "a mixed request silently drops only the bad series");
+
+    /* Real load case names contain parentheses; a greedy regex eats half a name. */
+    eq(Combos.splitLabel("Lateral Earth Pressure (LHS)(1)").base,
+      "Lateral Earth Pressure (LHS)(1)", "a name's own parentheses are never stripped");
+    eq(Combos.splitLabel("ENV(max)").sense, "max", "a sense token is stripped");
+  }
+
+  /* ==================================================================== */
+  section("family split — OPT_CS is a mode switch, not a filter");
+  {
+    const std = await ctx.mapi.postTable({
+      token: "BEAMFORCE", keys: [1], series: ["DL(ST)", "Erection(CS)"] });
+    const loads = new Set(std.DATA.map((d) => d[1]));
+    ok(loads.has("DL") && !loads.has("Erection(CS)"),
+      "with OPT_CS off, the CS series is absent at HTTP 200 with no error");
+
+    const cs = await ctx.mapi.postTable({
+      token: "BEAMFORCE", keys: [1], series: ["DL(ST)", "Erection(CS)"],
+      optCs: true, stageStep: "CS1:002(last)" });
+    const csLoads = new Set(cs.DATA.map((d) => d[1]));
+    ok(csLoads.has("Erection(CS)") && !csLoads.has("DL"),
+      "with OPT_CS on, the static series is the one that disappears");
+
+    /* A CB combination is in the ORDINARY family even when every child is CS. */
+    eq(Combos.familyOf(ctx.loadModel, "CS_Comb"), "STD",
+      "a CB combination of CS children is requested in the non-CS family");
+    eq(Combos.familyOf(ctx.loadModel, "Erection"), "CS", "a CS case is in the CS family");
+
+    const nostage = await throws(() => ctx.mapi.postTable({
+      token: "BEAMFORCE", keys: [1], series: ["Erection(CS)"], optCs: true }));
+    ok(nostage && /needs a stage/i.test(nostage.message),
+      "OPT_CS is never sent without a stage — every stage would come back at once");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · simple continuous beam, static cases only");
+  let staticRun;
+  {
+    staticRun = await analyse(ctx, {
+      setText: "1, 2, 3, 4, 5to8", keyElemText: "3", componentId: "My",
+      criterion: "max", position: "both",
+      selection: ["DL", "SDL", "LL", "WIND", "TEMP"]
+    });
+    const gov = staticRun.governing;
+    ok(gov, "a governing row was found");
+    eq(staticRun.report.meta.stage, "", "static results carry no stage");
+
+    /* Hand-check against the result table: the governing value must be the one
+       the API itself reports for that case, element and part. */
+    const check = await raw(ctx.mapi, {
+      elem: 3, part: gov.row.part, column: "Moment-y",
+      series: gov.row.load + "(ST)"
+    });
+    near(gov.value, check, "the governing value matches the API's own number for that row");
+
+    /* And it must actually be the maximum over everything queried. */
+    const all = [];
+    for (const c of ["DL", "SDL", "LL", "WIND", "TEMP"]) {
+      for (const part of ["Part I", "Part J"]) {
+        all.push(await raw(ctx.mapi, { elem: 3, part, column: "Moment-y", series: c + "(ST)" }));
+      }
+    }
+    near(gov.value, Math.max(...all), "it is the maximum over every case and both parts");
+
+    /* Every other element is reported AT THAT SAME STATE, not at its own extreme. */
+    const other = await raw(ctx.mapi, {
+      elem: 6, part: "Part I", column: "Shear-z", series: gov.row.load + "(ST)" });
+    const reported = staticRun.rows.find((r) => r.elemKey === "6" && r.part === "Part I");
+    near(reported.values["Shear-z"], other,
+      "element 6's shear is the COEXISTENT value at the governing load");
+
+    const ownMax = Math.max(...await Promise.all(["DL", "SDL", "LL", "WIND", "TEMP"].map((c) =>
+      raw(ctx.mapi, { elem: 6, part: "Part I", column: "Shear-z", series: c + "(ST)" }))));
+    ok(reported.values["Shear-z"] !== ownMax,
+      "and it is NOT element 6's own independent extreme — which is the whole point");
+
+    eq(staticRun.rows.map((r) => r.elemKey).filter((v, i, a) => a.indexOf(v) === i).join(","),
+      "1,2,3,4,5,6,7,8", "rows are sorted in the order the user entered the set");
+    eq(staticRun.rows.length, 16, "eight elements at two parts");
+    eq(staticRun.report.rows.find((r) => r.isKey) != null, true, "the key element's row is flagged");
+    eq(staticRun.report.rows.filter((r) => r.emphasis === "Moment-y").length, 1,
+      "exactly one cell — the governing one — is emphasised");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · mixed set of beams, trusses and general links");
+  {
+    const out = await analyse(ctx, {
+      setText: "1, 2, 21, 22, L5, L6", keyElemText: "1", componentId: "Fx",
+      criterion: "max", position: "both", selection: ["ULS_Comb_01", "ULS_Comb_07"]
+    });
+    const kinds = new Set(out.rows.map((r) => r.group));
+    ok(kinds.has("BEAM") && kinds.has("TRUSS") && kinds.has("GENLINK"),
+      "all three element types are merged into one answer");
+    eq(out.tokens.TRUSS, "TRUSSFORCE", "the truss token was resolved");
+    eq(out.tokens.GENLINK, "GENERALLINKFORCE",
+      "the general-link token was found by probing PAST the first candidate");
+
+    /* Column names differ per table: the link table calls its item column
+       "No." and the truss table calls its one force column "Force". */
+    const truss = out.rows.find((r) => r.group === "TRUSS");
+    ok(truss && truss.values["Axial"] != null,
+      "the truss table's \"Force\" column was found as Axial by name");
+    const link = out.rows.find((r) => r.group === "GENLINK");
+    ok(link && link.elemKey === "L5", "the link table's \"No.\" column was found, and namespaced");
+
+    /* A truss carries no shear or moment. That is ABSENT, not zero, and the
+       report must print the reason rather than a blank that reads as
+       "not computed". */
+    const trussRow = out.report.rows.find((r) => r.cells[0].text === "21");
+    const mzCol = out.report.columns.findIndex((c) => c.id === "Moment-z");
+    eq(trussRow.cells[mzCol].text, "n/a", "a component a truss cannot carry reads n/a");
+    ok(/axial force only/i.test(trussRow.cells[mzCol].reason || ""),
+      "and the cell carries the reason");
+
+    /* 5 is BOTH a beam element and a general link on this model. */
+    ok(out.warnings.some((w) => /both an element and a general link/i.test(w)),
+      "the colliding id space is reported rather than silently resolved");
+    const bare = await analyse(ctx, {
+      setText: "5, 6", keyElemText: "5", componentId: "Fx", criterion: "max",
+      position: "both", selection: ["ULS_Comb_01"] });
+    eq(bare.rows[0].group, "BEAM", "a bare number means the ELEMENT, never the link");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · envelope with a clear single governing child");
+  {
+    const out = await analyse(ctx, {
+      setText: "1to8", keyElemText: "3", componentId: "My", criterion: "max",
+      position: "both", selection: ["ULS_Env"]
+    });
+    ok(out.state, "the envelope was resolved rather than filtered directly");
+    eq(out.state.single, true, "it resolved to a single child");
+    ok(["ULS_Comb_01", "ULS_Comb_07", "ULS_Comb_12"].includes(out.state.resolvedName),
+      "and the child is one of the envelope's own", out.state.resolvedName);
+
+    /* The reconstruction is gated against what MIDAS published. */
+    near(out.state.check.reconstructed, out.state.check.published,
+      "the resolved state reproduces the envelope value at the key element");
+
+    const headline = out.report.header.find((h) => h.label === "Resolved");
+    ok(headline && /ULS_Env resolved to ULS_Comb_/.test(headline.value),
+      "the resolved child is stated prominently in the header", headline && headline.value);
+    ok(headline.emphasis, "and it is marked for emphasis");
+    /* The emphasis must survive resolution: the reported rows carry the
+       RESOLVED state's key while the governing row still carries the
+       envelope's, so a key comparison would drop it on exactly these runs. */
+    eq(out.report.rows.filter((r) => r.emphasis === "Moment-y").length, 1,
+      "the governing cell is still emphasised after an envelope is resolved");
+
+    /* THE TRAP: re-reading the envelope's own name at another element gives
+       that element's independent extreme, not the coexistent value. */
+    const elem7 = out.rows.find((r) => r.elemKey === "7" && r.part === "Part I");
+    const trueValue = await raw(ctx.mapi, {
+      elem: 7, part: "Part I", column: "Moment-y",
+      series: out.state.resolvedName + "(CB)" });
+    near(elem7.values["Moment-y"], trueValue,
+      "element 7 is reported at the RESOLVED child");
+    const naive = await raw(ctx.mapi, {
+      elem: 7, part: "Part I", column: "Moment-y", series: "ULS_Env(CB:max)" });
+    ok(Math.abs(naive - trueValue) > 1e-6,
+      "and re-reading ULS_Env by name at element 7 would have given a different, " +
+      "physically impossible number");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · nested envelope, two levels deep");
+  {
+    const out = await analyse(ctx, {
+      setText: "1to6", keyElemText: "2", componentId: "Fz", criterion: "max",
+      position: "both", selection: ["ULS_Env_Outer"]
+    });
+    ok(out.state, "the outer envelope resolved");
+    eq(Combos.envelopeValued(ctx.loadModel, out.state.resolvedName || ""), false,
+      "the resolution descended until the state is SINGLE-VALUED, never stopping " +
+      "at an envelope child");
+    ok(out.state.path.length >= 2,
+      "the descent went through more than one level", JSON.stringify(out.state.path));
+    near(out.state.check.reconstructed, out.state.check.published,
+      "and it still reconciles against the outer envelope's own published value");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · an envelope-valued Add resolves to a weighted sum");
+  {
+    const out = await analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["Env_Sum"]
+    });
+    ok(out.state && out.state.terms.length >= 2,
+      "Env_Sum resolved to more than one term — it is a sum, not one child");
+    ok(out.state.terms.every((t) => !Combos.envelopeValued(ctx.loadModel, t.name)),
+      "every term of the resolved state is single-valued");
+    near(out.state.check.reconstructed, out.state.check.published,
+      "the weighted sum reproduces what MIDAS reports for Env_Sum");
+    ok(/\+/.test(out.report.meta.expression),
+      "the header carries the full resolved expression, not just a name",
+      out.report.meta.expression);
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · moving load three levels deep must block");
+  {
+    const err = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["MV_Top_L1"]
+    }));
+    ok(err, "the run is refused");
+    ok(/Moving Load Tracer/.test(err.hint || ""),
+      "with the moving-load message and its workaround", err && err.hint);
+
+    const b = Combos.blockages(ctx.loadModel, "MV_Top_L1");
+    eq(b[0].leaf, "HA-UDL", "the blocked leaf is named");
+    eq(b[0].path.join(" → "), "MV_Top_L1 → MV_Mid_L2 → MV_Leaf_L3 → HA-UDL",
+      "and the whole path to it is reported — nothing on MV_Top_L1's own name says so");
+    eq(Combos.blockages(ctx.loadModel, "MV_Mid_L2").length, 1, "the middle level blocks too");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · settlement selected directly must block");
+  {
+    const err = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["Settle-1"]
+    }));
+    ok(err && /specified-displacement/.test(err.hint || ""),
+      "the settlement message names the workaround", err && err.hint);
+    ok(/enveloped over the settlement group/.test(err.hint || ""),
+      "and says why it is blocked");
+
+    const rs = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["RSX"] }));
+    ok(rs && /sign-less after modal combination/.test(rs.hint || ""),
+      "response spectrum is blocked with no workaround offered", rs && rs.hint);
+
+    const abs = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["ABS_Comb"] }));
+    ok(abs && /discards sign/.test(abs.hint || ""), "ABS is refused, not approximated");
+
+    const srss = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["SRSS_Comb"] }));
+    ok(srss && /quadratically/.test(srss.hint || ""), "SRSS is refused, not approximated");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · construction stage governing at a mid-stage step");
+  {
+    const steps = ["CS1:002(last)", "CS2:001(first)", "CS2:002(last)", "CS3:002(last)"];
+
+    /* Find a component whose extreme at element 4 sits at a MID-stage step,
+       so the test is about the case the brief names and not the easy one. */
+    let chosen = null;
+    for (const comp of El.COMPONENTS) {
+      const vals = [];
+      for (const st of steps) {
+        const [stage, step] = st.split(":");
+        for (const part of ["Part I", "Part J"]) {
+          vals.push({ st, part, v: await raw(ctx.mapi, {
+            elem: 4, part, column: comp.column, series: "Erection(CS)",
+            optCs: true, stageStep: st, step }) });
+        }
+      }
+      const best = vals.reduce((a, b) => (b.v > a.v ? b : a));
+      if (best.st !== "CS3:002(last)") { chosen = { comp, best }; break; }
+    }
+    ok(chosen, "the fixture has a component governing before the last stage");
+
+    const out = await analyse(ctx, {
+      setText: "1to6", keyElemText: "4", componentId: chosen.comp.id, criterion: "max",
+      position: "both", selection: ["Erection"], stageSteps: steps
+    });
+    near(out.governing.value, chosen.best.v,
+      "the governing value is the extreme across every stage and step queried");
+    eq(out.report.meta.stage, chosen.best.st.split(":")[0],
+      "the governing stage is the mid-stage one, not the last");
+    eq(out.report.meta.step, chosen.best.st.split(":")[1], "and the governing step with it");
+    ok(out.rows.every((r) => r.stage === out.report.meta.stage && r.step === out.report.meta.step),
+      "every reported row is at that same stage and step — the key includes Stage:Step");
+
+    const noStage = await throws(() => analyse(ctx, {
+      setText: "1to6", keyElemText: "4", componentId: "My", criterion: "max",
+      position: "both", selection: ["Erection"], stageSteps: [] }));
+    ok(noStage && /no stage and step is/.test(noStage.message),
+      "a stage case with no stage chosen is refused rather than guessed");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · time history saved with max/min only must block");
+  {
+    const err = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["Quake-TH"]
+    }));
+    ok(err, "the run is refused");
+    ok(/step-by-step results saved/.test(err.hint || ""),
+      "with the re-run message", err && err.hint);
+    eq(ctx.loadModel.thStepless["Quake-TH"], true,
+      "the audit recorded that this case holds no steps");
+
+    /* The same model's other time history case DID save steps, and must run. */
+    const good = await analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["Quake-TH-Steps"]
+    });
+    ok(good.governing.row.step !== "" && good.governing.row.step !== "max",
+      "a stepped time history governs at a real step", good.governing.row.step);
+    ok(good.rows.every((r) => r.step === good.governing.row.step),
+      "and every reported row is at that step — the key includes Step");
+
+    const wrapped = await throws(() => analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["TH_Comb"] }));
+    ok(wrapped && /step-by-step results saved/.test(wrapped.hint || ""),
+      "and a combination wrapping the stepless case blocks too");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · key element not in the set");
+  {
+    const err = await throws(() => analyse(ctx, {
+      setText: "1, 2, 3", keyElemText: "9", componentId: "My", criterion: "max",
+      position: "both", selection: ["DL"]
+    }));
+    ok(err && /not a member of the element set/i.test(err.message),
+      "the key element must be a member of the set", err && err.message);
+    ok(/Add it to the set/.test(err.hint || ""), "and the message says what to do about it");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · 200+ elements across many combinations");
+  {
+    const before = ctx.mapi.calls;
+    const combos = ["ULS_Comb_01", "ULS_Comb_07", "ULS_Comb_12", "DL", "SDL", "LL", "WIND", "TEMP"];
+    const out = await analyse(ctx, {
+      setText: "201to420", keyElemText: "300", componentId: "My", criterion: "max",
+      position: "both", selection: combos
+    });
+    const spent = ctx.mapi.calls - before;
+    eq(out.rows.length, 440, "220 elements at two parts");
+    ok(spent <= 3, "the whole run cost " + spent + " requests, not one per element " +
+      "or per load case (that would be " + (220 * combos.length) + ")");
+    eq(out.calls.filter((c) => c.group === "BEAM").length, 1,
+      "one /post/TABLE for the whole beam set");
+    ok(out.rows.every((r) => r.key === out.key),
+      "every one of the 440 rows carries the governing join key");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · min and absolute max pick different states");
+  {
+    /* Element 1's Moment-y: the maximum and the minimum sit under DIFFERENT load
+       cases on this fixture, which is the case the brief asks for — a criterion
+       that changes the answer, not just the sign. */
+    const common = {
+      setText: "1to8", keyElemText: "1", componentId: "My", position: "both",
+      selection: ["DL", "SDL", "LL", "WIND", "TEMP"]
+    };
+    const mx = await analyse(ctx, Object.assign({}, common, { criterion: "max" }));
+    const mn = await analyse(ctx, Object.assign({}, common, { criterion: "min" }));
+    const ab = await analyse(ctx, Object.assign({}, common, { criterion: "absmax" }));
+
+    ok(mx.key !== mn.key, "max and min govern at different states",
+      mx.key + " vs " + mn.key);
+    ok(mn.governing.value < 0 && mx.governing.value > 0,
+      "and with opposite signs");
+    const bigger = Math.abs(mn.governing.value) > Math.abs(mx.governing.value) ? mn : mx;
+    eq(ab.key, bigger.key, "absolute max lands on whichever of the two is larger in magnitude");
+    near(Math.abs(ab.governing.value), Math.abs(bigger.governing.value),
+      "with the same magnitude");
+  }
+
+  /* ==================================================================== */
+  section("TEST CASE · kN-m against kip-ft");
+  {
+    const metric = await analyse(ctx, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["ULS_Comb_01"], units: { FORCE: "kN", DIST: "m" }
+    });
+    const imperial = await setup({ FORCE: "kips", DIST: "ft" });
+    const imp = await analyse(imperial, {
+      setText: "1to4", keyElemText: "2", componentId: "My", criterion: "max",
+      position: "both", selection: ["ULS_Comb_01"], units: { FORCE: "kips", DIST: "ft" }
+    });
+    eq(imp.key, metric.key, "the governing state is the same whatever the units");
+
+    const kipsPerKn = mock.FORCE_FACTOR.kips;
+    const ftPerM = mock.DIST_FACTOR.ft;
+    near(imp.governing.value, metric.governing.value * kipsPerKn * ftPerM,
+      "the moment scales by force × length", 1e-6);
+
+    const mForce = metric.rows.find((r) => r.elemKey === "3" && r.part === "Part I").values["Axial"];
+    const iForce = imp.rows.find((r) => r.elemKey === "3" && r.part === "Part I").values["Axial"];
+    near(iForce, mForce * kipsPerKn, "and an axial force scales by force alone", 1e-6);
+
+    ok(/kips/.test(imp.report.header.find((h) => h.label === "Units").value),
+      "the header states the units the numbers are in");
+    ok(/kips·ft/.test(imp.report.columns.find((c) => c.id === "Moment-y").label),
+      "and the moment column names force × length");
+  }
+
+  /* ==================================================================== */
+  section("errors are specific");
+  {
+    const empty = await throws(() => analyse(ctx, {
+      setText: "  ", keyElemText: "1", selection: ["DL"] }));
+    ok(empty && /element set is empty/i.test(empty.message), "an empty set says so");
+
+    const plate = await throws(() => analyse(ctx, {
+      setText: "1, 30, 31", keyElemText: "1", selection: ["DL"] }));
+    ok(plate && /cannot report on/i.test(plate.message), "plates are rejected by name");
+    ok(/do not produce member end forces/.test(plate.hint || ""),
+      "with a reason, not just a refusal", plate && plate.hint);
+
+    const solid = await throws(() => analyse(ctx, {
+      setText: "1, 40", keyElemText: "1", selection: ["DL"] }));
+    ok(solid && /cannot report on/i.test(solid.message), "solids too");
+
+    const gone = await throws(() => analyse(ctx, {
+      setText: "1, 9999", keyElemText: "1", selection: ["DL"] }));
+    ok(gone && /Not in the model/i.test(gone.message), "an element number not in the model");
+
+    const noCases = await throws(() => analyse(ctx, {
+      setText: "1, 2", keyElemText: "1", selection: [] }));
+    ok(noCases && /No load cases/i.test(noCases.message), "no selection at all");
+
+    const badSet = await throws(() => analyse(ctx, {
+      setText: "1, frog", keyElemText: "1", selection: ["DL"] }));
+    ok(badSet && /could not be read/i.test(badSet.message), "unparseable set text");
+
+    /* Un-analysed model. */
+    mock.state.analysed = false;
+    const unanalysed = await throws(() => analyse(ctx, {
+      setText: "1, 2", keyElemText: "1", componentId: "My", criterion: "max",
+      position: "both", selection: ["DL"] }));
+    ok(unanalysed && /no analysis result/i.test(unanalysed.message),
+      "an un-analysed model is reported as exactly that", unanalysed && unanalysed.message);
+    ok(/has not been analysed/.test(unanalysed.hint || ""), "with an actionable hint");
+    mock.state.analysed = true;
+  }
+
+  /* ==================================================================== */
+  section("the resolution refuses what it cannot reconcile");
+  {
+    /* A synthetic model where the parent's extreme matches NO child and is not
+       the sum either. The plugin must refuse rather than print a number that
+       cannot be checked. */
+    const m = Combos.buildLoadModel({
+      stld: { 1: { NAME: "A" }, 2: { NAME: "B" } },
+      combos: [{ table: "LCOM-GEN", rows: {
+        1: { NAME: "ENV", iTYPE: 1, vCOMB: [
+          { ANAL: "ST", LCNAME: "A", FACTOR: 1 }, { ANAL: "ST", LCNAME: "B", FACTOR: 1 }] }
+      } }]
+    });
+    const values = { "ENV(CB:max)": 99, "A(ST)": 10, "B(ST)": 20 };
+    const err = await throws(() => Combos.resolveState(m, "ENV", "max",
+      (reqs) => new Map(reqs.map((r) => [r, values[r]]))));
+    ok(err && /No child of "ENV" reproduces/.test(err.message),
+      "an envelope whose value no child reproduces is refused", err && err.message);
+
+    /* And the measured MIDAS behaviour — an Add that propagates one child's
+       extreme rather than summing — is resolved through that child. */
+    const m2 = Combos.buildLoadModel({
+      stld: { 1: { NAME: "S" } },
+      combos: [{ table: "LCOM-GEN", rows: {
+        1: { NAME: "E", iTYPE: 1, vCOMB: [{ ANAL: "ST", LCNAME: "S", FACTOR: 1 }] },
+        2: { NAME: "ADD", iTYPE: 0, vCOMB: [
+          { ANAL: "CB", LCNAME: "E", FACTOR: 1 }, { ANAL: "ST", LCNAME: "S", FACTOR: 1 }] }
+      } }]
+    });
+    const v2 = { "ADD(CB:max)": 7, "E(CB:max)": 7, "S(ST)": 7 };
+    const st2 = await Combos.resolveState(m2, "ADD", "max",
+      (reqs) => new Map(reqs.map((r) => [r, v2[r]])));
+    ok(st2.notes.some((n) => /propagates one child's extreme/.test(n)),
+      "the propagating reading is used and SAID, not silently assumed",
+      JSON.stringify(st2.notes));
+    eq(st2.terms.length, 1, "and it resolves to that one child");
+  }
+
+  /* ==================================================================== */
+  section("near ties have a stated policy");
+  {
+    const m = Combos.buildLoadModel({
+      stld: { 1: { NAME: "A" }, 2: { NAME: "B" } },
+      combos: [{ table: "LCOM-GEN", rows: {
+        1: { NAME: "ENV", iTYPE: 1, vCOMB: [
+          { ANAL: "ST", LCNAME: "A", FACTOR: 1 }, { ANAL: "ST", LCNAME: "B", FACTOR: 1 }] }
+      } }]
+    });
+    const values = { "ENV(CB:max)": 50, "A(ST)": 50, "B(ST)": 50 };
+    const st = await Combos.resolveState(m, "ENV", "max",
+      (reqs) => new Map(reqs.map((r) => [r, values[r]])));
+    eq(st.resolvedName, "A", "a tie resolves to the first child in definition order");
+    eq(st.ties.length, 1, "and the tie is recorded, not swallowed");
+    eq(st.ties[0].children.join(","), "A,B", "with both contenders named");
+  }
+
+  /* ==================================================================== */
+  section("the report and the CSV carry the same document");
+  {
+    const doc = staticRun.report;
+    const csv = Report.toCsv(doc);
+    const lines = csv.split("\r\n");
+    const comments = lines.filter((l) => l.startsWith("#"));
+    ok(comments.length >= doc.header.length,
+      "the header block is present as comment lines");
+    ok(comments.some((l) => /^# Key element:/.test(l)), "including the key element");
+    ok(comments.some((l) => /^# Governing load:/.test(l)), "and the governing load");
+    ok(comments.some((l) => /^# Units:/.test(l)), "and the units");
+
+    const headerRow = lines[comments.length];
+    eq(headerRow.split(",").length, doc.columns.length,
+      "the CSV column count mirrors the on-screen table");
+    const body = lines.slice(comments.length + 1).filter(Boolean);
+    eq(body.length, doc.rows.length, "and the row count too");
+    eq(body[0].split(",")[0], doc.rows[0].cells[0].text, "in the same order");
+
+    /* Excel must never receive a locale-formatted string. */
+    const mzCol = doc.columns.findIndex((c) => c.id === "Moment-z");
+    const raw0 = body[0].split(",")[mzCol];
+    ok(raw0 === "" || raw0 === "n/a" || String(Number(raw0)) === raw0.replace(/^(-?)0+(\d)/, "$1$2") ||
+       isFinite(Number(raw0)), "numbers go out typed, not display-formatted", raw0);
+    ok(Number(raw0) !== Number(doc.rows[0].cells[mzCol].text) ||
+       doc.rows[0].cells[mzCol].value === Number(raw0),
+      "the CSV uses the typed accessor, not the rounded display text");
+  }
+
+  /* ==================================================================== */
+  section("window shell");
+  /* STRUCTURAL, because the close button is the most-broken part of a CIVIL NX
+     plugin and every one of these failures shipped on a real one. */
+  {
+    const rootDir = path.join(__dirname, "..");
+    const html = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
+    const app = fs.readFileSync(path.join(rootDir, "js", "app.js"), "utf8");
+
+    ok(/id="btn-close"/.test(html), "a close control exists at all");
+    ok(/<title>[^<]+<\/title>/.test(html), "document.title is set — the host shows it");
+
+    const drag = /<div id="drag-surface"[\s\S]*?<\/div>\s*<\/div>/.exec(html) ||
+                 /<div id="drag-surface"[\s\S]*?<\/div>/.exec(html);
+    ok(!!drag, "#drag-surface exists");
+    ok(drag && !/id="btn-close"/.test(drag[0]),
+      "the close button is NOT inside the drag surface (a drag would start on it)");
+    ok(html.indexOf('id="drag-surface"') < html.indexOf('id="btn-close"'),
+      "the close button follows the drag surface as a sibling");
+    ok(/getElementById\("drag-surface"\)/.test(app),
+      "the drag handler is bound to #drag-surface, not to the whole header");
+
+    ok(/function toHost\(/.test(app), "host messages go through one bridge helper");
+    ok(/typeof w\.postMessage !== "function"/.test(app),
+      "toHost DETECTS a missing bridge rather than relying on a thrown error");
+    ok(/did not close/.test(app),
+      "an unhonoured REQ_EXIT reports itself — window.close() is a no-op in WebView2");
+    ok(/REQ_EXIT/.test(app) && /REQ_WND_MOVE/.test(app), "both host messages are used");
+    ok(!/REQ_MOVE"/.test(app), "REQ_MOVE is not sent — the host ignores it");
+    ok(/addEventListener\("mousedown"/.test(app), "the drag is from mousedown, not pointerdown");
+    ok(/new MessageChannel\(\)/.test(app),
+      "yieldToUi uses MessageChannel — setTimeout is clamped to 1s when hidden");
+    ok(/function runChunked\(/.test(app) && /runChunked\(doc\.rows/.test(app),
+      "and the result table, which scales with the model, is built through it");
+
+    /* The run control must not sit in a panel that any option can hide. */
+    const foot = /<footer class="run-foot">[\s\S]*?<\/footer>/.exec(html);
+    ok(foot && /id="btn-run"/.test(foot[0]),
+      "the run control is in the persistent footer, not inside a hideable panel");
+
+    /* Both icons ship, each checked at the size it is actually used. */
+    const badge = fs.readFileSync(path.join(rootDir, "icon.svg"), "utf8");
+    const glyph = fs.readFileSync(path.join(rootDir, "icon-bar.svg"), "utf8");
+    ok(/fill="black"/.test(badge), "the list badge carries the house black tile");
+    ok(/data:image\/png;base64,/.test(badge),
+      "the list badge EMBEDS the house frame rather than linking it");
+    ok(!/fill="black"/.test(glyph), "the dark-bar glyph carries no tile");
+    ok(/#BDC2C8/i.test(glyph), "the dark-bar glyph is in the bar's ink colour");
+    ok(/icon\.svg/.test(html) && !/icon-bar\.svg"/.test(html),
+      "this light header takes the badge, and the bar glyph ships for a dark shell");
+
+    /* No CDN links: a plugin behind a corporate proxy must still render. */
+    ok(!/https?:\/\/(?!localhost)[^"']*\.(js|css)/.test(html),
+      "nothing is loaded from a CDN");
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(rootDir, "manifest.json"), "utf8"));
+    ok(manifest.width <= 1280 && manifest.height <= 760, "the window is 1280x760 or smaller");
+    ok(html.indexOf("v" + manifest.version) > 0,
+      "the version in index.html matches manifest.json");
+    const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, "package.json"), "utf8"));
+    eq(pkg.version, manifest.version, "and package.json matches too");
+    eq(pkg.type, "commonjs", "the local package.json keeps these files CommonJS");
+  }
+
+  /* ==================================================================== */
+  section("host query string");
+  {
+    eq(MapiM.keyFromLocation("?mapiKey=abc&redirectTo=http://x/civil"), "abc",
+      "key read from the query string");
+    eq(MapiM.baseFromLocation("?redirectTo=http://x/civil/"), "http://x/civil",
+      "redirectTo wins, trailing slash trimmed");
+    eq(MapiM.baseFromLocation(""), MapiM.DEFAULT_BASE, "falls back to the default base");
+  }
+
+  /* ---------------------------------------------------------------------- */
+  console.log(`\n${passed} passed, ${failed} failed`);
+  if (failed) { failures.forEach((f) => console.log("  · " + f)); process.exitCode = 1; }
+  mock.server.close();
+})().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+  mock.server.close();
+});

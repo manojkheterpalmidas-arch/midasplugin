@@ -1,0 +1,15 @@
+{
+  "short_name": "ConcurrentForces",
+  "name": "Concurrent Forces",
+  "version": "1.0.0",
+  "description": "Reports the coexistent forces in every element of a set at the single structural state where a chosen component governs at a chosen key element.",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#eef0f4",
+  "width": 1280,
+  "height": 760
+}

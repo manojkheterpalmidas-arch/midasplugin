@@ -1,0 +1,376 @@
+/* ==========================================================================
+   MIDAS CIVIL NX plugin template — styles
+   --------------------------------------------------------------------------
+   One palette defined as custom properties, swapped on [data-theme]. No CDN
+   fonts: a plugin behind a corporate proxy must still render.
+   ========================================================================== */
+
+:root {
+  --bg:        #eef0f4;
+  --panel:     #ffffff;
+  --ink:       #1c2330;
+  --ink-soft:  #5a6577;
+  --line:      #d7dce5;
+  --accent:    #2f6bed;
+  --accent-ink:#ffffff;
+  --ok:        #17794a;
+  --ok-bg:     #e3f5eb;
+  --warn:      #8a5b00;
+  --warn-bg:   #fbf0d9;
+  --bad:       #a3232a;
+  --bad-bg:    #fbe6e7;
+  --radius:    8px;
+}
+
+[data-theme="dark"] {
+  --bg:        #171a20;
+  --panel:     #1f242c;
+  --ink:       #e7ebf2;
+  --ink-soft:  #9aa5b6;
+  --line:      #333b47;
+  --accent:    #5b8dff;
+  --accent-ink:#0d1017;
+  --ok:        #6cd39c;
+  --ok-bg:     #16302410;
+  --warn:      #e0b45c;
+  --warn-bg:   #2e260f;
+  --bad:       #ff8a90;
+  --bad-bg:    #33191b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  min-height: 100%;
+}
+
+/* ------------------------------------------------------------------ header */
+
+.app-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  /* The bar is a drag handle; a text cursor over it invites selection instead. */
+  cursor: move;
+  user-select: none;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-icon { width: 28px; height: 28px; }
+.brand h1 { margin: 0; font-size: 15px; font-weight: 650; }
+.brand p  { margin: 0; font-size: 12px; color: var(--ink-soft); }
+
+.head-actions { display: flex; align-items: center; gap: 8px; }
+
+.claim {
+  font-size: 12px;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ badges */
+
+.badge {
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.badge.neutral { color: var(--ink-soft); }
+.badge.ok      { color: var(--ok);   background: var(--ok-bg); }
+.badge.warn    { color: var(--warn); background: var(--warn-bg); }
+.badge.bad     { color: var(--bad);  background: var(--bad-bg); }
+
+/* ------------------------------------------------------------------ panels */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.panel h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.row label { font-size: 12px; color: var(--ink-soft); }
+.row input {
+  flex: 1 1 200px;
+  min-width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.hint { margin: 8px 0 0; font-size: 12px; color: var(--ink-soft); }
+
+.run-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.run-lead { font-size: 13px; color: var(--ink-soft); }
+
+/* ----------------------------------------------------------------- buttons */
+
+.btn {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.ghost   { background: transparent; }
+
+/* ---------------------------------------------------------------- progress */
+
+.progress-line { margin: 10px 0 6px; font-size: 12px; color: var(--ink-soft); }
+.progress-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width .15s linear;
+}
+
+/* ------------------------------------------------------------------ errors */
+
+.panel.error { border-color: var(--bad); background: var(--bad-bg); }
+.error-message { margin: 0; color: var(--bad); font-weight: 600; }
+.error-hint    { margin: 6px 0 0; font-size: 13px; color: var(--ink); }
+
+/* ------------------------------------------------------------------ tables */
+
+/* Sideways scroll belongs on the wrapper so the header travels with the rows. */
+.table-wrap { overflow-x: auto; }
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.grid th, .grid td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  /* Never a bare 1fr in a grid layout, and never a fixed width here: text
+     columns collapse to ~20px and headers render as "N." and "S1". */
+  min-width: 80px;
+}
+.grid th {
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-weight: 600;
+  /* Deliberately NOT uppercased: a CSS-uppercased "ν" renders as a Greek
+     capital that reads as a Latin N. Spell symbols out instead. */
+}
+.grid td.num { text-align: right; }
+.grid td.note { color: var(--ink-soft); font-size: 13px; }
+
+/* The drag surface must FILL the header's height. A header that centres its
+   children leaves it short, and the strips above and below it then drag
+   nothing - which reads as an intermittently broken title bar. */
+#drag-surface{
+  flex: 1 1 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+  user-select: none;
+}
+
+/* ==========================================================================
+   Concurrent Forces — additions
+   ========================================================================== */
+
+.lede {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.lede strong { color: var(--ink); font-weight: 650; }
+
+.panel.compact { padding: 10px 14px; }
+.panel h3 { margin: 14px 0 6px; font-size: 13px; font-weight: 650; }
+
+.field-label {
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.fingerprint {
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.row input.grow, .row select { flex: 1 1 180px; min-width: 120px; }
+.row select, .field select, .field input {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+.row > .btn { flex: 0 0 auto; }
+
+/* Never a bare 1fr: with the other columns fixed, a text column collapses to
+   about twenty pixels and its header renders as "N." */
+.grid-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px 16px;
+}
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field .hint.tight { margin: 0; }
+
+.radios { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding-top: 4px; }
+.radios.wrap { gap: 8px 16px; }
+.radios label, .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.check { font-size: 12px; color: var(--ink-soft); }
+
+.table-wrap.tall { max-height: 260px; overflow-y: auto; }
+
+.grid th.tick, .grid td.tick { min-width: 28px; width: 28px; padding-right: 0; }
+.grid td.mono {
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+
+/* A blocked entry is visibly out of play, and carries its reason on hover
+   rather than being silently absent from the list. */
+tr.blocked td { color: var(--ink-soft); background: var(--warn-bg); }
+tr.blocked td.reason { color: var(--warn); }
+tr.child td { color: var(--ink-soft); font-size: 12px; }
+td.indent-1 { padding-left: 26px; }
+td.indent-2 { padding-left: 46px; }
+td.indent-3 { padding-left: 66px; }
+
+/* The key element's row, and the cell the criterion actually chose. */
+tr.key-row td { background: var(--ok-bg); font-weight: 600; }
+td.emph {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  font-weight: 700;
+}
+td.na { color: var(--ink-soft); font-style: italic; }
+
+.head-block {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2px 18px;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+.head-block div { display: flex; gap: 8px; padding: 2px 0; }
+.head-block dt { color: var(--ink-soft); min-width: 130px; }
+.head-block dd { margin: 0; }
+.head-block div.emphasis { background: var(--ok-bg); border-radius: 4px; padding: 3px 6px; }
+.head-block div.emphasis dd { font-weight: 700; }
+
+.notes { margin: 0 0 10px; padding-left: 18px; font-size: 12px; color: var(--warn); }
+.notes:empty { display: none; }
+.notes li { margin: 2px 0; }
+
+.csv-text {
+  width: 100%;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  padding: 8px;
+}
+
+/* The run control is in a persistent footer so no option can hide it. */
+.run-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, .06);
+}
+.progress { flex: 1 1 auto; }
+.progress .progress-line { margin: 0 0 5px; }
+
+details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-soft);
+  padding: 6px 0;
+}
+
+.hint.bad-text { color: var(--bad); }
+
+/* The template's `.row input` rule stretches every input in a row, which turns
+   a checkbox into a 200px-wide box with its label stranded beside it. Ticks and
+   radios keep their intrinsic size. */
+.row input[type="checkbox"],
+.row input[type="radio"] {
+  flex: 0 0 auto;
+  min-width: 0;
+  width: auto;
+}
+.row .check { flex: 0 0 auto; }

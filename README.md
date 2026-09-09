@@ -27,7 +27,9 @@ references/
   pitfalls.md                 the pre-flight checklist
 assets/
   template/                   a working plugin: client, mock server, 26-assertion test suite
-  scripts/                    pack.ps1 and verify-zip.ps1
+  scripts/                    pack.ps1 and verify-zip.ps1 (Windows), pack.js (anywhere)
+plugins/
+  concurrent-forces/          a finished plugin built on the skill, with its release zip
 ```
 
 ## Install
@@ -82,6 +84,14 @@ node mock-midas/server.js     # then open the URL it prints
 node test/run.js              # 26 assertions, no CIVIL NX needed
 ```
 
+So does the finished plugin in `plugins/concurrent-forces`:
+
+```bash
+cd plugins/concurrent-forces
+node mock-midas/server.js     # then open the URL it prints
+node test/run.js              # 160 assertions, no CIVIL NX needed
+```
+
 ## A taste of what's inside
 
 Five behaviours that every plugin gets wrong at least once:
@@ -100,6 +110,31 @@ Five behaviours that every plugin gets wrong at least once:
   the construction-stage series *or* everything else, never both — and the
   family it excludes comes back absent at HTTP 200 with no error. A combination
   mixing stage cases with static ones cannot be read in one call.
+
+## Concurrent Forces — a plugin built on this skill
+
+`plugins/concurrent-forces` is a complete, installable plugin rather than an
+example. It reports the **coexistent** forces across a set of elements: nominate
+one key element and one force component, and it finds the load case,
+combination, stage and step at which that component governs there, then reports
+every other element in the set **at that same structural state**.
+
+CIVIL NX gives concurrent *components* at a single element; it has never given
+concurrent *elements*. Tabulating each element's own maximum side by side
+produces a set of numbers that never occurred together — which is the mistake
+the plugin exists to prevent.
+
+Its rule is that two results are concurrent only if they share one deterministic
+structural state, keyed on `(Load, Stage, Step)`. Moving load, settlement,
+response spectrum, ABS, SRSS and step-less time history are **blocked with the
+workaround named**, because each is already an envelope at source. Envelope
+combinations are **resolved** instead — recursively, to a single-valued leaf or
+a weighted sum, gated against the value MIDAS itself publishes, and displayed as
+*"ULS_Env resolved to ULS_Comb_07"*.
+
+Install `plugins/concurrent-forces/dist/Concurrent Forces v1.0.0.zip` from the
+CIVIL NX Plug-in menu. The plugin's own readme records what is verified and what
+was probed at runtime rather than assumed.
 
 ## Scope and caveats
 

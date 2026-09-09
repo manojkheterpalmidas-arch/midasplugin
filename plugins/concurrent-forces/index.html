@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Concurrent forces across an element set — MIDAS CIVIL NX plugin">
+  <title>Concurrent Forces</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main class="shell">
+
+  <!-- THE DRAG SURFACE IS A SIBLING OF THE CONTROLS, NEVER THEIR ANCESTOR.
+       app.js posts REQ_WND_MOVE from a mousedown on #drag-surface only, so a
+       press on the close button can never start a window drag - whatever the
+       event target resolves to. Nest the two and you are relying on a
+       closest() guard that has to reach through whatever is inside the button:
+       put an icon in it and e.target becomes the <path>, not the button.
+       See references/host.md. -->
+  <header class="app-head">
+    <div id="drag-surface" class="brand" title="Drag this bar to move the plugin window">
+      <!-- This header is a LIGHT panel at 28px, so the badge is the right asset
+           here. A dark #21272A controller bar at 12px must take ./icon-bar.svg
+           instead: a badge with a black tile is invisible there, and it gets
+           reported as a missing icon rather than as a contrast problem. -->
+      <img src="./icon.svg" alt="" class="brand-icon">
+      <div>
+        <h1>Concurrent Forces</h1>
+        <p>MIDAS CIVIL NX &middot; v1.0.0</p>
+      </div>
+    </div>
+    <div class="head-actions">
+      <!-- The read/write claim, worded exactly, and backed by the POST
+           whitelist in js/mapi.js. Keep the two in step. -->
+      <span class="claim" title="Reads /db/ tables with GET. Posts only to /post/TABLE, which reads analysis results and changes nothing. No PUT, no DELETE, no EXPORT_PATH, nothing written to disk or to the model.">
+        &#128274; Non-mutating
+      </span>
+      <span id="conn-badge" class="badge neutral">Not connected</span>
+      <button id="btn-theme" class="btn ghost" type="button">Dark</button>
+      <button id="btn-close" class="btn ghost" type="button" title="Close plugin">Close</button>
+    </div>
+  </header>
+
+  <p class="lede">
+    Nominate one <strong>key element</strong> and one force component. The plugin
+    finds the load case, combination, stage and step at which that component
+    governs there, and reports the forces in <strong>every other element of the
+    set at that same structural state</strong> — the coexistent forces, not each
+    element&rsquo;s own independent extreme.
+  </p>
+
+  <section id="error" class="panel error" hidden>
+    <p id="error-message" class="error-message"></p>
+    <p id="error-hint" class="error-hint" hidden></p>
+  </section>
+
+  <!-- 0 ------------------------------------------------------- connection -->
+  <section class="panel compact">
+    <div class="row">
+      <span class="field-label">Endpoint</span>
+      <input id="in-base" type="text" readonly
+             title="Supplied by the host as ?redirectTo=. A remembered value never overrides it.">
+      <span class="field-label">Key</span>
+      <span id="key-print" class="fingerprint" title="A fingerprint of the MAPI key. The key itself is a credential and is not displayed.">—</span>
+      <input id="in-key" type="password" placeholder="paste a key when running outside CIVIL NX" class="grow">
+      <button id="btn-connect" class="btn" type="button">Refresh</button>
+    </div>
+    <p id="model-line" class="hint">
+      CIVIL NX must be open, and the model analysed. A key keeps verifying after
+      the program closes, so the live session is checked too.
+    </p>
+    <details id="model-detail">
+      <summary>What was read from the model</summary>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>Table</th><th class="num">Records</th><th>Provenance</th></tr></thead>
+          <tbody id="model-body"></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <!-- 1 ------------------------------------------------------ element set -->
+  <section class="panel">
+    <h2>1 &middot; Element set</h2>
+    <div class="row">
+      <input id="in-set" type="text" class="grow"
+             placeholder="10, 12, 15to20 — general links as L5"
+             title="Numbers, ranges (15to20 or 15-20) and general links written L5, separated by commas.">
+      <label class="field-label" for="in-group">Pick from structure group</label>
+      <select id="in-group">
+        <option value="">—</option>
+      </select>
+      <button id="btn-group-add" class="btn" type="button" title="Append that group's elements to the set">Add</button>
+      <!-- The host contract is a query string in and two window messages out
+           (REQ_WND_MOVE, REQ_EXIT). There is no selection channel, so this
+           cannot be wired; saying so beats a button that does nothing. -->
+      <button id="btn-pick" class="btn" type="button" disabled
+              title="Not available. The CIVIL NX plugin host exposes only REQ_WND_MOVE and REQ_EXIT to a plugin window — there is no selection-sync message, so a plugin cannot read what is selected in the model window. Type the numbers, or pick a structure group.">
+        Select in model window
+      </button>
+    </div>
+    <p id="set-line" class="hint">Elements are reported in the order you enter them.</p>
+  </section>
+
+  <!-- 2,3,4,5 ----------------------------------------------- the question -->
+  <section class="panel">
+    <h2>2 &middot; The governing condition</h2>
+    <div class="grid-form">
+      <div class="field">
+        <label class="field-label" for="in-key-elem">Key element</label>
+        <input id="in-key-elem" type="text" placeholder="12"
+               title="One element, which must be a member of the set above.">
+        <p id="key-line" class="hint tight">Its extreme picks the structural state.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="in-component">Key component</label>
+        <select id="in-component"></select>
+        <p class="hint tight">Mapped to the result table&rsquo;s own column names.</p>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Criterion</span>
+        <div id="in-criterion" class="radios"></div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="in-position">Output position</label>
+        <select id="in-position"></select>
+        <p class="hint tight">Both ends is the usual choice for a beam.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="in-force">Force unit</label>
+        <select id="in-force"></select>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="in-dist">Length unit</label>
+        <select id="in-dist"></select>
+        <p id="unit-line" class="hint tight"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 ---------------------------------------------- cases and combinations -->
+  <section class="panel">
+    <h2>3 &middot; Load cases and combinations</h2>
+    <div class="row">
+      <input id="in-filter" type="text" class="grow" placeholder="filter by name">
+      <label class="check"><input id="in-hide-blocked" type="checkbox"> Hide blocked</label>
+      <button id="btn-none" class="btn" type="button">Clear selection</button>
+      <span id="sel-count" class="badge neutral">0 selected</span>
+    </div>
+    <div class="table-wrap tall">
+      <table class="grid" id="case-table">
+        <thead>
+          <tr><th class="tick"></th><th>Name</th><th>Kind</th><th>Addressed as</th><th>Status</th></tr>
+        </thead>
+        <tbody id="case-body"></tbody>
+      </table>
+    </div>
+    <p class="hint">
+      A blocked entry is greyed and cannot be ticked; hover it for the reason and
+      the way round it. Blocking is decided by walking each combination to its
+      leaves — a moving load three levels down blocks the parent, and nothing on
+      the parent&rsquo;s own name would ever say so.
+    </p>
+
+    <div id="stage-block" hidden>
+      <h3>Construction stages and steps to search</h3>
+      <div id="stage-list" class="radios wrap"></div>
+      <p class="hint">
+        Construction-stage results are a separate result family and one request
+        answers for one stage, so each stage and step here is a separate query.
+        Only the steps a stage actually saved are offered.
+      </p>
+    </div>
+  </section>
+
+  <!-- 8 --------------------------------------------------------- results -->
+  <section id="results" class="panel" hidden>
+    <h2>Concurrent forces</h2>
+    <dl id="result-head" class="head-block"></dl>
+    <ul id="result-notes" class="notes"></ul>
+    <div class="table-wrap">
+      <table class="grid" id="result-table">
+        <thead><tr id="result-head-row"></tr></thead>
+        <tbody id="result-body"></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="btn-csv" class="btn" type="button">Export CSV</button>
+      <button id="btn-csv-show" class="btn ghost" type="button">Show as text</button>
+      <span id="csv-line" class="hint"></span>
+    </div>
+    <details id="csv-block" hidden>
+      <summary>CSV text — select all and copy</summary>
+      <textarea id="csv-text" class="csv-text" readonly rows="12"></textarea>
+    </details>
+  </section>
+
+  <!-- The run control lives in a persistent footer, never inside a panel that
+       an option can hide — a plugin whose Run button was in a conditionally
+       shown panel rendered with no way to run it. -->
+  <footer class="run-foot">
+    <div id="progress" class="progress">
+      <p id="progress-line" class="progress-line">Idle</p>
+      <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+    </div>
+    <button id="btn-run" class="btn primary" type="button" disabled>Find concurrent forces</button>
+  </footer>
+
+</main>
+
+<script src="./js/theme.js"></script>
+<script src="./js/mapi.js"></script>
+<script src="./js/combos.js"></script>
+<script src="./js/elements.js"></script>
+<script src="./js/concurrent.js"></script>
+<script src="./js/report.js"></script>
+<script src="./js/model.js"></script>
+<script src="./js/run.js"></script>
+<script src="./js/app.js"></script>
+</body>
+</html>

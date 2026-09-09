@@ -1,5 +1,7 @@
 node_modules/
 *.zip
+# ...except a packaged plugin release, which is the deliverable.
+!plugins/*/dist/*.zip
 scratchpad/
 .DS_Store
 Thumbs.db

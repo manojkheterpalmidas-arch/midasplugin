@@ -1,5 +1,7 @@
 node_modules/
 *.zip
+# the worked example ships with the skill - it is the point of examples/
+!examples/*.zip
 scratchpad/
 .DS_Store
 Thumbs.db

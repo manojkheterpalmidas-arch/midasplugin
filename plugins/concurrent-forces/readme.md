@@ -1,11 +1,17 @@
 # Concurrent Forces — MIDAS CIVIL NX
 
-**v1.1.0 · non-mutating**
+**v1.2.0 · non-mutating**
 
-Reports the **coexistent** forces across a set of elements. You nominate one
-*key element* and one force component; the plugin finds the load case,
-combination, stage and step at which that component governs there, and reports
-the forces in **every other element of the set at that same structural state**.
+Reports the **coexistent** results across a set of items. You nominate one *key
+item* and one *result quantity*; the plugin finds the load case, combination,
+stage and step at which that quantity governs there, and reports the results in
+**every other item of the set at that same structural state**.
+
+The driver can be **any** quantity the model publishes — a member force, a
+plate force, a general or elastic link force, a node reaction or a
+displacement — and the reported set can mix all of them. A reaction at a
+bearing picks the state exactly as well as a beam moment does, because the join
+key is what makes the answer concurrent, not where the driver came from.
 
 CIVIL NX does not do this today. Its own tables give concurrent *components* at
 a single element — the six forces that coexist at one point — not concurrent
@@ -23,21 +29,53 @@ already an envelope at source has no single state behind its maximum, so no
 other element can be paired with it. Those cases are **blocked, not
 approximated** — with a message naming the way round it.
 
+## The result sources
+
+Everything the plugin knows about where a result comes from lives in one
+registry in `js/elements.js`. Adding a source is adding an entry to it; nothing
+else in the plugin names a table or a component.
+
+| Source | Token | Items | Quantities |
+|---|---|---|---|
+| Beam elements | `BEAMFORCE` ✔ | elements | Axial, Shear-y/z, Torsion, Moment-y/z |
+| Truss elements | `TRUSSFORCE` ? | elements | Axial only |
+| Plate elements | `PLATEFORCE` ✔ | elements | Fxx, Fyy, Fxy, Mxx, Myy, Mxy, Vxx, Vyy — **per unit length** |
+| General links | `GENLINKFORCE` ? | `L12` | the six member forces |
+| Elastic links | `ELASTICLINK` ✔ | `EL12` | the six member forces |
+| Node reactions | `REACTIONG` ✔ | `N12` | FX, FY, FZ, MX, MY, MZ |
+| Node displacements | `DISPLACEMENTG` ✔ | `N12` | DX, DY, DZ, RX, RY, RZ |
+
+✔ token confirmed against a live CIVIL NX; ? probed at runtime against the
+build, and the panel names whichever answered.
+
+Items carry their **namespace**, because the id spaces collide: a bare number is
+an element, `N12` a node, `L12` a general link, `EL12` an elastic link. Where a
+number exists in more than one space the run says so rather than resolving it
+silently.
+
+A node belongs to **two** sources — reactions and displacements are different
+tables over the same items — so a node in the set is read from both and the two
+merge onto one row, their columns being disjoint.
+
+Every column carries its own unit, because they are not all forces: a plate
+moment is `kN·m/m`, a displacement is `m` and a rotation is `rad`. A single
+"moments are in kN·m" note would be wrong three times over.
+
 ## What it does
 
-1. Reads `/db/ELEM` and routes every member of the set to the result table that
-   reports on it — beams to `BEAMFORCE`, trusses and tension/compression-only
-   members to the truss force table, general links to the general link force
-   table. A set may mix types; the queries fan out and the rows merge on the
-   join key. Plates and solids are rejected by name with a reason.
+1. Reads `/db/ELEM`, `/db/NODE` and the link tables, and routes every member of
+   the set to the source that reports on it. A set may mix elements, links and
+   nodes; the queries fan out and the rows merge on the join key. An element
+   type with no result table this plugin reads — a solid — is rejected by name
+   with a reason.
 2. Reads all **ten** `LCOM-*` tables and builds the full combination tree.
 3. Validates — see below — **before** any bulk result query.
-4. Issues **one `POST /post/TABLE` per element type per result family**, with
-   every element in `NODE_ELEMS.KEYS` and every selected case in
-   `LOAD_CASE_NAMES`. A 220-element set across eight combinations costs three
-   requests, not 1760.
+4. Issues **one `POST /post/TABLE` per source per result family**, with every
+   item in `NODE_ELEMS.KEYS` and every selected case in `LOAD_CASE_NAMES`. A
+   220-element set across eight combinations costs three requests, not 1760.
 5. Builds `(Load, Stage, Step)` on every row, finds the governing row at the key
-   element, and filters the merged set to the rows sharing that key.
+   item — in the key effect's own source, since one item can appear in two
+   tables — and filters the merged set to the rows sharing that key.
 
 ## Validation — what is blocked, and why
 
@@ -89,7 +127,7 @@ definition order wins, and every tie is reported in the results header.
 
 ## Running it
 
-Inside CIVIL NX: install `dist/Concurrent Forces v1.1.0.zip` from the Plug-in
+Inside CIVIL NX: install `dist/Concurrent Forces v1.2.0.zip` from the Plug-in
 menu, open it, fill the panel top to bottom, press **Find concurrent forces**.
 
 Without CIVIL NX:
@@ -103,16 +141,16 @@ Serve over **HTTP, not `file://`** — a `file://` page can serve a stale snapsh
 of some scripts while refreshing others, so UI changes appear to do nothing.
 
 ```bash
-node test/run.js      # 198 assertions, no CIVIL NX needed
+node test/run.js      # 230 assertions, no CIVIL NX needed
 ```
 
 Repackage after a change:
 
 ```bash
-node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.1.0.zip"
+node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.2.0.zip"
 # on Windows, equivalently:
-..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.1.0.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.1.0.zip"
+..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.2.0.zip"
+..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.2.0.zip"
 ```
 
 ## What is where
@@ -123,7 +161,7 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.1.
 | `js/mapi.js` | the API client — error semantics, the family split, token probing, the POST whitelist |
 | `js/model.js` | reads the model; probes the endpoints whose keys differ per build |
 | `js/combos.js` | the load model — envelope-valuedness, blocking, envelope resolution |
-| `js/elements.js` | the element set — parsing, namespaces, type routing, column lookup |
+| `js/elements.js` | the **source registry** — tokens, namespaces, components, units, column lookup, set parsing |
 | `js/concurrent.js` | join keys, the governing row, the concurrent filter |
 | `js/report.js` | one neutral document; the table and the CSV are walkers over it |
 | `js/chart.js` | the distribution chart, as a spec — no DOM, no markup |
@@ -131,6 +169,25 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.1.
 | `js/app.js` | wiring only — no logic |
 | `mock-midas/server.js` | the API and the static files from one process |
 | `test/run.js` | the offline suite |
+
+## What changed in v1.2.0
+
+**The governing condition is any result quantity.** It was six beam member
+forces; it is now 39 quantities across seven sources, and the key item can be a
+node, a link or a plate as readily as a beam. The driver names a *source* as
+well as an item, because a node carries both a reaction and a displacement and
+the criterion has to know which of the two it is ranging over.
+
+Everything downstream was generalised with it rather than special-cased: the
+output position applies only to sources that have an I and a J end (a plate
+reports at its nodes, a node has no part at all, and filtering those rows on
+`both` would have discarded every one of them); each column carries its own
+unit kind; and an empty cell now distinguishes *"this item is read from that
+table and produced no row"* — an unrestrained node publishes no reaction — from
+*"that quantity does not apply to this kind of item"*.
+
+The set gained the `N` and `EL` namespaces to go with `L`, and the model read
+gained `/db/NODE` and the elastic link table.
 
 ## What changed in v1.1.0
 

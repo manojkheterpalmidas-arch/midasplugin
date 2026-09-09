@@ -89,7 +89,7 @@ So does the finished plugin in `plugins/concurrent-forces`:
 ```bash
 cd plugins/concurrent-forces
 node mock-midas/server.js     # then open the URL it prints
-node test/run.js              # 198 assertions, no CIVIL NX needed
+node test/run.js              # 230 assertions, no CIVIL NX needed
 ```
 
 ## A taste of what's inside
@@ -114,10 +114,14 @@ Five behaviours that every plugin gets wrong at least once:
 ## Concurrent Forces — a plugin built on this skill
 
 `plugins/concurrent-forces` is a complete, installable plugin rather than an
-example. It reports the **coexistent** forces across a set of elements: nominate
-one key element and one force component, and it finds the load case,
-combination, stage and step at which that component governs there, then reports
-every other element in the set **at that same structural state**.
+example. It reports the **coexistent** results across a set of items: nominate
+one key item and one result quantity, and it finds the load case, combination,
+stage and step at which that quantity governs there, then reports every other
+item in the set **at that same structural state**.
+
+The driver can be any quantity the model publishes — a member force, a plate
+force, a general or elastic link force, a node reaction or a displacement — and
+the set can mix all of them.
 
 CIVIL NX gives concurrent *components* at a single element; it has never given
 concurrent *elements*. Tabulating each element's own maximum side by side
@@ -132,7 +136,7 @@ combinations are **resolved** instead — recursively, to a single-valued leaf o
 a weighted sum, gated against the value MIDAS itself publishes, and displayed as
 *"ULS_Env resolved to ULS_Comb_07"*.
 
-Install `plugins/concurrent-forces/dist/Concurrent Forces v1.1.0.zip` from the
+Install `plugins/concurrent-forces/dist/Concurrent Forces v1.2.0.zip` from the
 CIVIL NX Plug-in menu. The plugin's own readme records what is verified and what
 was probed at runtime rather than assumed.
 

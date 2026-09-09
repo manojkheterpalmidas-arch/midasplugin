@@ -28,7 +28,7 @@
       <img src="./icon.svg" alt="" class="brand-icon">
       <div>
         <h1>Concurrent Forces</h1>
-        <p>MIDAS CIVIL NX &middot; v1.1.0</p>
+        <p>MIDAS CIVIL NX &middot; v1.2.0</p>
       </div>
     </div>
     <div class="head-actions">
@@ -44,7 +44,8 @@
   </header>
 
   <p class="lede">
-    Nominate one <strong>key element</strong> and one force component. The plugin
+    Nominate one <strong>key item</strong> and one result quantity — a member
+    force, a plate force, a link force, a node reaction or a displacement. The plugin
     finds the load case, combination, stage and step at which that component
     governs there, and reports the forces in <strong>every other element of the
     set at that same structural state</strong> — the coexistent forces, not each
@@ -96,8 +97,8 @@
     <h2>1 &middot; Element set</h2>
     <div class="row">
       <input id="in-set" type="text" class="grow"
-             placeholder="10, 12, 15to20 — general links as L5"
-             title="Numbers, ranges (15to20 or 15-20) and general links written L5, separated by commas.">
+             placeholder="10, 12, 15to20 — nodes N5, links L5 / EL5"
+             title="Elements are plain numbers. A node is N12, a general link L12, an elastic link EL12, and a range is 15to20 or 15-20. Separate with commas.">
       <label class="field-label" for="in-group">Pick from structure group</label>
       <select id="in-group">
         <option value="">—</option>
@@ -120,16 +121,17 @@
     <h2>2 &middot; The governing condition</h2>
     <div class="grid-form">
       <div class="field">
-        <label class="field-label" for="in-key-elem">Key element</label>
-        <input id="in-key-elem" type="text" placeholder="12"
-               title="One element, which must be a member of the set above.">
+        <label class="field-label" for="in-key-elem">Key item</label>
+        <input id="in-key-elem" type="text" placeholder="12, or N12 for a node"
+               title="One item — an element, a node, or a link — which must be a member of the set above.">
         <p id="key-line" class="hint tight">Its extreme picks the structural state.</p>
       </div>
 
       <div class="field">
-        <label class="field-label" for="in-component">Key component</label>
+        <label class="field-label" for="in-component">Key effect</label>
         <select id="in-component"></select>
-        <p class="hint tight">Mapped to the result table&rsquo;s own column names.</p>
+        <p class="hint tight">Any result quantity: member forces, plate forces,
+           link forces, node reactions or displacements.</p>
       </div>
 
       <div class="field">
@@ -140,7 +142,8 @@
       <div class="field">
         <label class="field-label" for="in-position">Output position</label>
         <select id="in-position"></select>
-        <p class="hint tight">Both ends is the usual choice for a beam.</p>
+        <p class="hint tight">Applies to sources with an I and a J end; node and
+           plate results ignore it.</p>
       </div>
 
       <div class="field">

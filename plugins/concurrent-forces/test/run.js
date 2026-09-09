@@ -72,7 +72,8 @@ async function setup(units) {
 
 function analyse(ctx, over) {
   return Run.runAnalysis(Object.assign({
-    mapi: ctx.mapi, elems: ctx.model.elems, links: ctx.model.links,
+    mapi: ctx.mapi, elems: ctx.model.elems, nodes: ctx.model.nodes,
+    links: ctx.model.links, elinks: ctx.model.elinks,
     loadModel: ctx.loadModel, componentId: "My", criterion: "max", position: "both",
     units: ctx.mapi.unit, stageSteps: []
   }, over));
@@ -92,7 +93,9 @@ async function raw(mapi, opts) {
   const ix = {};
   t.HEAD.forEach((h, i) => { ix[h] = i; });
   const row = t.DATA.find((d) =>
-    String(d[ix.Part]) === opts.part &&
+    /* A node table has no Part column at all, so a part filter must be skipped
+       rather than compared against undefined. */
+    (opts.part == null || String(d[ix.Part]) === opts.part) &&
     (opts.step == null || String(d[ix.Step]) === opts.step));
   return row ? Number(row[ix[opts.column]]) : null;
 }
@@ -265,7 +268,7 @@ async function raw(mapi, opts) {
     eq(staticRun.rows.map((r) => r.elemKey).filter((v, i, a) => a.indexOf(v) === i).join(","),
       "1,2,3,4,5,6,7,8", "rows are sorted in the order the user entered the set");
     eq(staticRun.rows.length, 16, "eight elements at two parts");
-    eq(staticRun.report.rows.find((r) => r.isKey) != null, true, "the key element's row is flagged");
+    ok(staticRun.report.rows.find((r) => r.isKey) != null, "the key element's row is flagged");
     eq(staticRun.report.rows.filter((r) => r.emphasis === "Moment-y").length, 1,
       "exactly one cell — the governing one — is emphasised");
   }
@@ -277,7 +280,7 @@ async function raw(mapi, opts) {
       setText: "1, 2, 21, 22, L5, L6", keyElemText: "1", componentId: "Fx",
       criterion: "max", position: "both", selection: ["ULS_Comb_01", "ULS_Comb_07"]
     });
-    const kinds = new Set(out.rows.map((r) => r.group));
+    const kinds = new Set(out.rows.map((r) => r.source));
     ok(kinds.has("BEAM") && kinds.has("TRUSS") && kinds.has("GENLINK"),
       "all three element types are merged into one answer");
     eq(out.tokens.TRUSS, "TRUSSFORCE", "the truss token was resolved");
@@ -286,10 +289,10 @@ async function raw(mapi, opts) {
 
     /* Column names differ per table: the link table calls its item column
        "No." and the truss table calls its one force column "Force". */
-    const truss = out.rows.find((r) => r.group === "TRUSS");
+    const truss = out.rows.find((r) => r.source === "TRUSS");
     ok(truss && truss.values["Axial"] != null,
       "the truss table's \"Force\" column was found as Axial by name");
-    const link = out.rows.find((r) => r.group === "GENLINK");
+    const link = out.rows.find((r) => r.source === "GENLINK");
     ok(link && link.elemKey === "L5", "the link table's \"No.\" column was found, and namespaced");
 
     /* A truss carries no shear or moment. That is ABSENT, not zero, and the
@@ -302,12 +305,13 @@ async function raw(mapi, opts) {
       "and the cell carries the reason");
 
     /* 5 is BOTH a beam element and a general link on this model. */
-    ok(out.warnings.some((w) => /both an element and a general link/i.test(w)),
-      "the colliding id space is reported rather than silently resolved");
+    ok(out.warnings.some((w) => /also exists? as/i.test(w) || /collid/i.test(w)),
+      "the colliding id space is reported rather than silently resolved",
+      JSON.stringify(out.warnings));
     const bare = await analyse(ctx, {
       setText: "5, 6", keyElemText: "5", componentId: "Fx", criterion: "max",
       position: "both", selection: ["ULS_Comb_01"] });
-    eq(bare.rows[0].group, "BEAM", "a bare number means the ELEMENT, never the link");
+    eq(bare.rows[0].source, "BEAM", "a bare number means the ELEMENT, never the link");
   }
 
   /* ==================================================================== */
@@ -441,7 +445,7 @@ async function raw(mapi, opts) {
     /* Find a component whose extreme at element 4 sits at a MID-stage step,
        so the test is about the case the brief names and not the easy one. */
     let chosen = null;
-    for (const comp of El.COMPONENTS) {
+    for (const comp of El.SOURCES.BEAM.components) {
       const vals = [];
       for (const st of steps) {
         const [stage, step] = st.split(":");
@@ -530,7 +534,7 @@ async function raw(mapi, opts) {
     eq(out.rows.length, 440, "220 elements at two parts");
     ok(spent <= 3, "the whole run cost " + spent + " requests, not one per element " +
       "or per load case (that would be " + (220 * combos.length) + ")");
-    eq(out.calls.filter((c) => c.group === "BEAM").length, 1,
+    eq(out.calls.filter((c) => c.source === "BEAM").length, 1,
       "one /post/TABLE for the whole beam set");
     ok(out.rows.every((r) => r.key === out.key),
       "every one of the 440 rows carries the governing join key");
@@ -596,15 +600,27 @@ async function raw(mapi, opts) {
       setText: "  ", keyElemText: "1", selection: ["DL"] }));
     ok(empty && /element set is empty/i.test(empty.message), "an empty set says so");
 
-    const plate = await throws(() => analyse(ctx, {
-      setText: "1, 30, 31", keyElemText: "1", selection: ["DL"] }));
-    ok(plate && /cannot report on/i.test(plate.message), "plates are rejected by name");
-    ok(/do not produce member end forces/.test(plate.hint || ""),
-      "with a reason, not just a refusal", plate && plate.hint);
-
     const solid = await throws(() => analyse(ctx, {
       setText: "1, 40", keyElemText: "1", selection: ["DL"] }));
-    ok(solid && /cannot report on/i.test(solid.message), "solids too");
+    ok(solid && /cannot report on/i.test(solid.message),
+      "an element type with no result table this plugin reads is rejected by name");
+    ok(/no result table this plugin reads/.test(solid.hint || ""),
+      "with a reason, not just a refusal", solid && solid.hint);
+
+    /* The driver names a source as well as an item, and the two have to agree. */
+    const wrongSource = await throws(() => analyse(ctx, {
+      setText: "1, 2", keyItemText: "1", effectId: "REACTION:FZ",
+      criterion: "max", position: "both", selection: ["DL"] }));
+    ok(wrongSource && /has no node reactions result/i.test(wrongSource.message),
+      "asking for a reaction at a beam element is refused", wrongSource && wrongSource.message);
+    ok(/beam elements/.test(wrongSource.hint || ""),
+      "and the message names what that item does have", wrongSource && wrongSource.hint);
+
+    const noSuch = await throws(() => analyse(ctx, {
+      setText: "1, 2", keyItemText: "1", effectId: "NOPE:Frog",
+      criterion: "max", position: "both", selection: ["DL"] }));
+    ok(noSuch && /not a result quantity/i.test(noSuch.message),
+      "an unknown effect id is refused rather than silently defaulted");
 
     const gone = await throws(() => analyse(ctx, {
       setText: "1, 9999", keyElemText: "1", selection: ["DL"] }));
@@ -694,7 +710,7 @@ async function raw(mapi, opts) {
     const comments = lines.filter((l) => l.startsWith("#"));
     ok(comments.length >= doc.header.length,
       "the header block is present as comment lines");
-    ok(comments.some((l) => /^# Key element:/.test(l)), "including the key element");
+    ok(comments.some((l) => /^# Key item:/.test(l)), "including the key item");
     ok(comments.some((l) => /^# Governing load:/.test(l)), "and the governing load");
     ok(comments.some((l) => /^# Units:/.test(l)), "and the units");
 
@@ -713,6 +729,145 @@ async function raw(mapi, opts) {
     ok(Number(raw0) !== Number(doc.rows[0].cells[mzCol].text) ||
        doc.rows[0].cells[mzCol].value === Number(raw0),
       "the CSV uses the typed accessor, not the rounded display text");
+  }
+
+  /* ==================================================================== */
+  section("the governing condition is ANY result quantity");
+  {
+    /* The point of this section: the driver is an item plus an effect, and the
+       effect names its own result table. Nothing downstream assumes a beam, an
+       element, or even a member force — the join key is what makes the answer
+       concurrent, and it does not care where the driver came from. */
+    eq(El.SOURCE_ORDER.length, 7, "seven result sources are registered");
+    eq(El.allComponents().length, 39, "39 quantities can drive a run");
+
+    /* ---- a NODE REACTION drives, and elements report at that state ------ */
+    const byReaction = await analyse(ctx, {
+      setText: "N1, N15, N30, 1, 2, 3", keyItemText: "N1",
+      effectId: "REACTION:FZ", criterion: "max", position: "both",
+      selection: ["DL", "SDL", "LL", "WIND", "TEMP"]
+    });
+    eq(byReaction.effect.source, "REACTION", "the driver is a node reaction");
+    const govN = byReaction.governing;
+    const rawN = await raw(ctx.mapi, {
+      token: "REACTIONG", elem: 1, part: undefined, column: "FZ",
+      series: govN.row.load + "(ST)" });
+    near(govN.value, rawN, "the governing reaction matches the API's own number");
+
+    /* Every element in the set is reported AT THE STATE THE REACTION PICKED. */
+    const beamRow = byReaction.rows.find((r) => r.elemKey === "2" && r.part === "Part I");
+    const coex = await raw(ctx.mapi, {
+      elem: 2, part: "Part I", column: "Moment-y", series: govN.row.load + "(ST)" });
+    near(beamRow.values["Moment-y"], coex,
+      "a beam moment coexisting with the governing reaction");
+    ok(byReaction.rows.every((r) => r.key === byReaction.key),
+      "nodes and elements share one join key — that is what makes them concurrent");
+
+    /* A node carries BOTH sources; their columns are disjoint, so both are
+       read and the criterion ranges over only the one the driver named. */
+    const sources = new Set(byReaction.rows.map((r) => r.source));
+    ok(sources.has("REACTION") && sources.has("DISPLACEMENT") && sources.has("BEAM"),
+      "reactions, displacements and beam forces in one answer",
+      JSON.stringify([...sources]));
+
+    /* A free node publishes NO reaction row. That is absent, not zero. */
+    const free = await analyse(ctx, {
+      setText: "N7, N1", keyItemText: "N1", effectId: "REACTION:FZ",
+      criterion: "max", position: "both", selection: ["DL"] });
+    ok(!free.rows.some((r) => r.elemKey === "N7" && r.source === "REACTION"),
+      "an unrestrained node returns no reaction row");
+    const freeDoc = free.report;
+    const n7 = freeDoc.rows.find((r) => r.cells[0].text === "N7");
+    const fzCol = freeDoc.columns.findIndex((c) => c.id === "FZ");
+    eq(n7.cells[fzCol].text, "n/a", "and its reaction cell reads n/a, never blank");
+    ok(/not restrained/.test(n7.cells[fzCol].reason || ""),
+      "with the reason printed", n7.cells[fzCol].reason);
+
+    /* ---- a DISPLACEMENT drives -------------------------------------- */
+    const byDisp = await analyse(ctx, {
+      setText: "N5, N6, 4, 5", keyItemText: "N5", effectId: "DISPLACEMENT:DZ",
+      criterion: "absmax", position: "both", selection: ["ULS_Comb_01", "ULS_Comb_07"] });
+    eq(byDisp.effect.source, "DISPLACEMENT", "a displacement can drive too");
+    eq(byDisp.report.meta.component, "DZ", "and the report knows which quantity it was");
+    ok(/rad|m\b/.test(byDisp.report.columns.find((c) => c.id === "RX").label),
+      "a rotation column is labelled in radians, not in force",
+      byDisp.report.columns.find((c) => c.id === "RX").label);
+
+    /* ---- an ELASTIC LINK drives, and its part column is a NODE -------- */
+    const byLink = await analyse(ctx, {
+      setText: "EL201, EL202, 1", keyItemText: "EL201", effectId: "ELASTICLINK:Axial",
+      criterion: "max", position: "both", selection: ["ULS_Comb_01"] });
+    eq(byLink.tokens.ELASTICLINK, "ELASTICLINK", "the elastic link token resolved");
+    ok(byLink.rows.some((r) => r.source === "ELASTICLINK"), "and its rows came back");
+    /* Its part is a node number, not an I or a J end. Filtering those rows on
+       an I/J output position would throw every one of them away. */
+    const elRow = byLink.rows.find((r) => r.source === "ELASTICLINK");
+    ok(!/^Part [IJ]$/.test(elRow.part),
+      "the elastic link's part is a node, not an end", elRow.part);
+    eq(elRow.partKind, "node", "which the row records");
+
+    /* 201 is BOTH a beam element and an elastic link on this model. */
+    eq(byLink.rows.find((r) => r.elemKey === "EL201").source, "ELASTICLINK",
+      "EL201 addresses the LINK");
+    const asElem = await analyse(ctx, {
+      setText: "201", keyItemText: "201", effectId: "BEAM:Axial",
+      criterion: "max", position: "both", selection: ["ULS_Comb_01"] });
+    eq(asElem.rows[0].source, "BEAM", "and a bare 201 addresses the ELEMENT");
+    ok(byLink.warnings.some((w) => /also exists as/.test(w)),
+      "the three-way collision is reported", JSON.stringify(byLink.warnings));
+
+    /* ---- a PLATE drives, in per-unit-length units --------------------- */
+    const byPlate = await analyse(ctx, {
+      setText: "30, 31, 1", keyItemText: "30", effectId: "PLATE:Mxx",
+      criterion: "max", position: "both", selection: ["ULS_Comb_01"] });
+    eq(byPlate.tokens.PLATE, "PLATEFORCE", "the plate token resolved");
+    const mxx = byPlate.report.columns.find((c) => c.id === "Mxx");
+    eq(mxx.label, "Mxx (kN·m/m)",
+      "a plate moment is labelled per unit length, not as a plain moment");
+    const fxx = byPlate.report.columns.find((c) => c.id === "Fxx");
+    eq(fxx.label, "Fxx (kN/m)", "and an in-plane force per unit length too");
+
+    /* A beam in the same set has no plate components, and vice versa. */
+    const beamDocRow = byPlate.report.rows.find((r) => r.cells[0].text === "1");
+    const mxxCol = byPlate.report.columns.findIndex((c) => c.id === "Mxx");
+    eq(beamDocRow.cells[mxxCol].text, "n/a", "a beam has no Mxx");
+    ok(/per unit length/.test(beamDocRow.cells[mxxCol].reason || "") ||
+       /not carried/.test(beamDocRow.cells[mxxCol].reason || ""),
+      "with the reason", beamDocRow.cells[mxxCol].reason);
+
+    /* ---- the output position does not apply where there is no I/J end -- */
+    const posHeader = byReaction.report.header.find((h) => h.label === "Output position");
+    ok(/not applicable/.test(posHeader.value),
+      "a node driver reports the output position as not applicable", posHeader.value);
+  }
+
+  /* ==================================================================== */
+  section("units are per quantity, not per table");
+  {
+    const metric = await analyse(ctx, {
+      setText: "N1, 1", keyItemText: "N1", effectId: "REACTION:FZ",
+      criterion: "max", position: "both", selection: ["ULS_Comb_01"],
+      units: { FORCE: "kN", DIST: "m" } });
+    const mm = await setup({ FORCE: "N", DIST: "mm" });
+    const small = await analyse(mm, {
+      setText: "N1, 1", keyItemText: "N1", effectId: "REACTION:FZ",
+      criterion: "max", position: "both", selection: ["ULS_Comb_01"],
+      units: { FORCE: "N", DIST: "mm" } });
+
+    near(small.governing.value, metric.governing.value * 1000,
+      "a reaction force scales with FORCE alone", 1e-6);
+
+    const mRow = metric.rows.find((r) => r.source === "DISPLACEMENT");
+    const sRow = small.rows.find((r) => r.source === "DISPLACEMENT");
+    near(sRow.values.DZ, mRow.values.DZ * 1000,
+      "a displacement scales with LENGTH", 1e-6);
+    near(sRow.values.RX, mRow.values.RX,
+      "and a rotation does not scale at all — it is already dimensionless", 1e-9);
+
+    const mMoment = metric.rows.find((r) => r.source === "BEAM" && r.part === "Part I");
+    const sMoment = small.rows.find((r) => r.source === "BEAM" && r.part === "Part I");
+    near(sMoment.values["Moment-y"], mMoment.values["Moment-y"] * 1000 * 1000,
+      "a member moment scales with FORCE x LENGTH", 1e-6);
   }
 
   /* ==================================================================== */

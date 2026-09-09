@@ -34,28 +34,41 @@
   function parseTable(table, opts) {
     opts = opts || {};
     var El = elementsModule();
-    var want = ["Elem", "Load", "Stage", "Step", "Part"].concat(opts.components || []);
-    var cols = El.resolveColumns(table.HEAD, want);
+    var src = opts.source;
+    var components = (src.components || []).map(function (c) { return c.column; });
+    var cols = El.resolveColumns(table.HEAD, {
+      item: src.itemCols, part: src.partCols, components: components
+    });
     var ix = cols.index;
     var rows = [];
 
     (table.DATA || []).forEach(function (d) {
-      if (ix.Elem == null) return;
-      var num = Number(String(d[ix.Elem]).trim());
+      if (ix.item == null) return;
+      var num = Number(String(d[ix.item]).trim());
       if (!isFinite(num)) return;
       var row = {
-        group: opts.group || null,
+        source: src.id,
         elem: num,
-        /* The member key carries its NAMESPACE. Element and link ids share a
-           number space, so a bare number would merge two different objects. */
-        elemKey: opts.group === "GENLINK" ? "L" + num : String(num),
+        /* The member key carries its NAMESPACE. Element, node and link ids are
+           separate spaces that collide, so a bare number would merge two
+           different objects into one row. */
+        elemKey: El.keyOf(src.namespace, num),
+        /* A node table reports one row per item and has no part column at all.
+           Recording that here is what stops an output-position filter throwing
+           every one of its rows away. */
+        hasPart: !!src.partCols,
+        /* Whether the part is an I/J END. A plate reports at its nodes and an
+           elastic link at its two node ids, so an I/J/both output position is
+           meaningless there — filtering on it would silently discard every
+           one of those rows. */
+        partKind: src.partKind || null,
         load: cell(d, ix.Load),
         stage: cell(d, ix.Stage),
         step: cell(d, ix.Step),
-        part: cell(d, ix.Part),
+        part: src.partCols ? cell(d, ix.part) : "",
         values: Object.create(null)
       };
-      (opts.components || []).forEach(function (c) {
+      components.forEach(function (c) {
         if (ix[c] == null) return;
         var v = Number(d[ix[c]]);
         row.values[c] = isFinite(v) ? v : null;
@@ -105,7 +118,19 @@
     { id: "all", label: "All output points" }
   ];
 
-  function partAllowed(part, position) {
+  /**
+   * @param {string} part
+   * @param {string} position
+   * @param {boolean} [hasPart]  false where the source has no part column at all
+   *
+   * A node reaction is one value at one node — there is no Part I or Part J to
+   * choose between. Filtering those rows on an output position would discard
+   * every one of them, which is how a reaction driver would come back as "no
+   * result row found".
+   */
+  function partAllowed(part, position, hasPart, partKind) {
+    if (hasPart === false) return true;
+    if (partKind && partKind !== "ij") return true;
     var p = normPart(part);
     if (position === "all") return true;
     if (position === "both") return p === "I" || p === "J";
@@ -151,7 +176,11 @@
 
     rows.forEach(function (r) {
       if (r.elemKey !== opts.keyElemKey) return;
-      if (!partAllowed(r.part, opts.position)) return;
+      /* One item can appear in more than one table — a node carries both a
+         reaction and a displacement row — so the driver names a SOURCE as well
+         as an item, or the criterion would range over two different quantities. */
+      if (opts.source && r.source !== opts.source) return;
+      if (!partAllowed(r.part, opts.position, r.hasPart, r.partKind)) return;
       var v = r.values[comp];
       if (v == null || !isFinite(v)) return;
       n++;
@@ -178,7 +207,7 @@
     (opts.order || []).forEach(function (k, i) { orderOf[k] = i; });
 
     var out = rows.filter(function (r) {
-      return r.key === key && partAllowed(r.part, opts.position);
+      return r.key === key && partAllowed(r.part, opts.position, r.hasPart, r.partKind);
     });
 
     out.sort(function (a, b) {
@@ -186,6 +215,7 @@
       if (oa == null) oa = 1e9;
       if (ob == null) ob = 1e9;
       if (oa !== ob) return oa - ob;
+      if (a.source !== b.source) return String(a.source).localeCompare(String(b.source));
       return partRank(a.part) - partRank(b.part);
     });
     return out;
@@ -226,12 +256,13 @@
         if (opts.matches(r, terms[i].name)) { term = terms[i]; break; }
       }
       if (!term) return;
-      var id = r.elemKey + SEP + r.part + SEP + r.stage + SEP + r.step;
+      var id = r.source + SEP + r.elemKey + SEP + r.part + SEP + r.stage + SEP + r.step;
       var b = buckets[id];
       if (!b) {
         b = buckets[id] = {
-          group: r.group, elem: r.elem, elemKey: r.elemKey, part: r.part,
-          stage: r.stage, step: r.step, load: opts.label || "(resolved state)",
+          source: r.source, elem: r.elem, elemKey: r.elemKey, part: r.part,
+          hasPart: r.hasPart, partKind: r.partKind, stage: r.stage, step: r.step,
+          load: opts.label || "(resolved state)",
           values: Object.create(null), seen: Object.create(null)
         };
         order.push(id);

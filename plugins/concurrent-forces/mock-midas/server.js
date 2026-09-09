@@ -70,6 +70,15 @@ for (let i = 201; i <= 420; i++) ELEMS[String(i)] = beam(i, ((i - 201) % 29) + 1
    makes a bare number ambiguous. */
 const GENLINKS = { "5": { NODE: [5, 6], LINK: 1 }, "6": { NODE: [6, 7], LINK: 1 }, "7": { NODE: [7, 8], LINK: 1 } };
 
+/* Elastic links share the id space too — 201 and 202 are also beam elements
+   here, so a set naming them bare addresses the ELEMENTS and EL201 the links. */
+const ELINKS = { "201": { NODE: [1, 2] }, "202": { NODE: [2, 3] } };
+
+/* Only restrained nodes publish a reaction. A free node returns NO ROW from
+   REACTIONG, which is not the same as returning zero — and the plugin has to
+   say so rather than print a blank. */
+const SUPPORTS = { "1": true, "15": true, "30": true };
+
 /* Load cases, by analysis kind. */
 const CASES = {
   "DL":              { kind: "ST" },
@@ -146,6 +155,9 @@ const TABLES = {
   NODE: NODES,
   ELEM: ELEMS,
   GENLINK: GENLINKS,                 /* NOTE: /db/GLNK is 404 on this build */
+  ELNK: ELINKS,
+  CONS: { "1": { CONSTRAINT: "111111" }, "15": { CONSTRAINT: "001000" },
+          "30": { CONSTRAINT: "111000" } },
   MATL: { "1": { TYPE: "CONC", NAME: "C40/50" } },
   SECT: { "1": { SECT_NAME: "Deck girder" }, "2": { SECT_NAME: "Brace" } },
   GRUP: {
@@ -178,8 +190,42 @@ function namedRows(list) {
 /* -------------------------------------------------------------- arithmetic -- */
 
 const COMPONENTS = ["Axial", "Shear-y", "Shear-z", "Torsion", "Moment-y", "Moment-z"];
-const AMP = { "Axial": 800, "Shear-y": 150, "Shear-z": 250, "Torsion": 40, "Moment-y": 900, "Moment-z": 300 };
-const MOMENT = { "Torsion": 1, "Moment-y": 1, "Moment-z": 1 };
+const PLATE_COMPS = ["Fxx", "Fyy", "Fxy", "Mxx", "Myy", "Mxy", "Vxx", "Vyy"];
+const REACTION_COMPS = ["FX", "FY", "FZ", "MX", "MY", "MZ"];
+const DISP_COMPS = ["DX", "DY", "DZ", "RX", "RY", "RZ"];
+
+const AMP = {
+  "Axial": 800, "Shear-y": 150, "Shear-z": 250,
+  "Torsion": 40, "Moment-y": 900, "Moment-z": 300,
+  "Fxx": 420, "Fyy": 380, "Fxy": 120, "Mxx": 65, "Myy": 58, "Mxy": 22,
+  "Vxx": 95, "Vyy": 88,
+  "FX": 600, "FY": 550, "FZ": 1400, "MX": 70, "MY": 90, "MZ": 45,
+  "DX": 0.012, "DY": 0.009, "DZ": 0.045, "RX": 0.0006, "RY": 0.0011, "RZ": 0.0004
+};
+
+/* How each quantity scales with the requested units. Getting this wrong is not
+   cosmetic: a plate moment is per unit length, so it scales with FORCE alone,
+   and a rotation does not scale at all. */
+const UNIT_KIND = {
+  "Axial": "F", "Shear-y": "F", "Shear-z": "F",
+  "Torsion": "FL", "Moment-y": "FL", "Moment-z": "FL",
+  "Fxx": "F/L", "Fyy": "F/L", "Fxy": "F/L", "Vxx": "F/L", "Vyy": "F/L",
+  "Mxx": "FL/L", "Myy": "FL/L", "Mxy": "FL/L",
+  "FX": "F", "FY": "F", "FZ": "F", "MX": "FL", "MY": "FL", "MZ": "FL",
+  "DX": "L", "DY": "L", "DZ": "L", "RX": "rad", "RY": "rad", "RZ": "rad"
+};
+
+function unitScale(comp, fF, fD) {
+  switch (UNIT_KIND[comp]) {
+    case "F": return fF;
+    case "FL": return fF * fD;
+    case "F/L": return fF / fD;
+    case "FL/L": return fF;
+    case "L": return fD;
+    case "rad": return 1;
+    default: return fF;
+  }
+}
 
 const FORCE_FACTOR = { N: 1000, kN: 1, kgf: 101.9716213, tonf: 0.1019716213, lbf: 224.8089431, kips: 0.2248089431 };
 const DIST_FACTOR = { mm: 1000, cm: 100, m: 1, in: 39.37007874, ft: 3.280839895 };
@@ -188,7 +234,10 @@ const hash = (s) => { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt
 /* Quantise at EVERY node, so the plugin's own reconciliation is a real check. */
 const q = (v) => Number(v.toPrecision(9));
 
-/** The raw value of a LEAF case, in kN and m. */
+/** The raw value of a LEAF case, in kN and m.
+ *  `elem` is "<id>:<SOURCE>", so the same number in two id spaces — element 201
+ *  and elastic link 201 both exist here — reports different values, which is
+ *  what makes a namespace mix-up visible instead of merely wrong. */
 function leafValue(name, elem, part, comp, stage, step) {
   const spec = CASES[name];
   if (!spec) return null;
@@ -366,17 +415,35 @@ const TOKENS = {
                    plugin indexing by position or by the literal "Axial" fails
                    here rather than in front of a user. */
                 rename: { "Axial": "Force" } },
-  GENERALLINKFORCE: { group: "GENLINK", item: "No.", comps: COMPONENTS, parts: ["Part I", "Part J"] }
+  GENERALLINKFORCE: { group: "GENLINK", item: "No.", comps: COMPONENTS, parts: ["Part I", "Part J"] },
+  /* The elastic link and plate tables report at NODES, not at an I and a J
+     end — so their part column is called "Node" and carries node numbers. A
+     plugin that filters those rows on an I/J output position throws every one
+     of them away. */
+  ELASTICLINK: { group: "ELASTICLINK", item: "No.", comps: COMPONENTS, partCol: "Node",
+                 partsOf: (id) => (ELINKS[String(id)] || { NODE: [0, 0] }).NODE.map(String) },
+  PLATEFORCE: { group: "PLATE", item: "Elem", comps: PLATE_COMPS, partCol: "Node",
+                partsOf: (id) => (ELEMS[String(id)] || { NODE: [0] }).NODE
+                  .filter((n) => n > 0).map(String) },
+  /* Node tables carry the COORDINATE SUFFIX. The bare REACTION and
+     DISPLACEMENT do not exist, and asking for them answers with the same
+     "creating utbl" as any other token that is not there. */
+  REACTIONG: { group: "REACTION", item: "Node", comps: REACTION_COMPS, parts: null,
+               only: (id) => !!SUPPORTS[String(id)] },
+  DISPLACEMENTG: { group: "DISPLACEMENT", item: "Node", comps: DISP_COMPS, parts: null }
 };
 
 function elementsOfGroup(group, keys) {
   return keys.filter((k) => {
     const id = String(k);
     if (group === "GENLINK") return !!GENLINKS[id];
+    if (group === "ELASTICLINK") return !!ELINKS[id];
+    if (group === "REACTION" || group === "DISPLACEMENT") return !!NODES[id];
     const e = ELEMS[id];
     if (!e) return false;
     if (group === "BEAM") return e.TYPE === "BEAM";
     if (group === "TRUSS") return ["TRUSS", "TENSTR", "COMPTR"].indexOf(e.TYPE) >= 0;
+    if (group === "PLATE") return ["PLATE", "PLSTRESS", "PLSTRAIN", "WALL"].indexOf(e.TYPE) >= 0;
     return false;
   });
 }
@@ -385,19 +452,23 @@ function buildTable(spec, keys, seriesIn, optCs, stageStep, unit) {
   const fF = FORCE_FACTOR[unit.FORCE] == null ? 1 : FORCE_FACTOR[unit.FORCE];
   const fD = DIST_FACTOR[unit.DIST] == null ? 1 : DIST_FACTOR[unit.DIST];
 
-  const HEAD = [spec.item, "Load", "Stage", "Step", "Part"].concat(
-    spec.comps.map((c) => (spec.rename && spec.rename[c]) || c));
+  const partCol = spec.parts === null ? null : (spec.partCol || "Part");
+  const HEAD = [spec.item, "Load", "Stage", "Step"]
+    .concat(partCol ? [partCol] : [])
+    .concat(spec.comps.map((c) => (spec.rename && spec.rename[c]) || c));
 
-  const ids = elementsOfGroup(spec.group, keys);
+  const ids = elementsOfGroup(spec.group, keys).filter((id) => !spec.only || spec.only(id));
   const DATA = [];
   ids.forEach((id) => {
+    const parts = partCol ? (spec.partsOf ? spec.partsOf(id) : spec.parts) : [null];
     seriesIn.forEach((p) => {
       stepsFor(p, stageStep).forEach((ss) => {
-        spec.parts.forEach((part) => {
-          const row = [String(id), responseLabel(p), ss.stage, ss.step, part];
+        parts.forEach((part) => {
+          const row = [String(id), responseLabel(p), ss.stage, ss.step]
+            .concat(partCol ? [part] : []);
           spec.comps.forEach((comp) => {
-            const v = valueOf(p.name, p.sense, id, part, comp, ss.stage, ss.step);
-            const scaled = v == null ? null : v * fF * (MOMENT[comp] ? fD : 1);
+            const v = valueOf(p.name, p.sense, id + ":" + spec.group, part || "", comp, ss.stage, ss.step);
+            const scaled = v == null ? null : v * unitScale(comp, fF, fD);
             row.push(scaled == null ? "" : Number(scaled.toPrecision(9)));
           });
           DATA.push(row);
@@ -557,5 +628,6 @@ if (require.main === module) {
 module.exports = {
   server, state, TABLES, CASES, COMBOS, STAGES, TOKENS,
   valueOf, envelopeValued, addressable, parseSeries, responseLabel,
-  publishedSeries, elementsOfGroup, FORCE_FACTOR, DIST_FACTOR, COMPONENTS
+  publishedSeries, elementsOfGroup, FORCE_FACTOR, DIST_FACTOR, COMPONENTS,
+  ELINKS, SUPPORTS, NODES, unitScale, UNIT_KIND
 };

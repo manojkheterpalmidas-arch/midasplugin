@@ -32,6 +32,10 @@
   /* Tables read by key, unconditionally or on a stated dependency. */
   var CORE = [
     { key: "ELEM", label: "Elements" },
+    /* Nodes are read because a node can be BOTH a member of the reported set
+       and the driver — a reaction or a displacement picks the structural state
+       exactly as well as a member force does. */
+    { key: "NODE", label: "Nodes" },
     { key: "GRUP", label: "Structure groups" },
     { key: "STLD", label: "Static load cases" },
     { key: "STAG", label: "Construction stages" },
@@ -43,6 +47,8 @@
   var PROBES = [
     { id: "GENLINK", label: "General links", kind: null,
       candidates: ["GLNK", "GENLINK", "GLINK"] },
+    { id: "ELASTICLINK", label: "Elastic links", kind: null,
+      candidates: ["ELNK", "ELASTICLINK", "ELINK"] },
     { id: "MV", label: "Moving load cases", kind: "MV",
       candidates: ["MVLDBS", "MVLDAASH", "MVLDEURO", "MVLDKR", "MVLDCH", "MVLDIRC", "MVLD"] },
     { id: "SM", label: "Settlement load cases", kind: "SM",
@@ -103,7 +109,9 @@
       probes: probes,
       caseTables: caseTables,
       elems: tables.ELEM.status === "ok" ? tables.ELEM.rows : null,
+      nodes: tables.NODE.status === "ok" ? tables.NODE.rows : null,
       links: probes.GENLINK.rows,
+      elinks: probes.ELASTICLINK.rows,
       groups: structureGroups(tables.GRUP),
       stages: stages(tables.STAG),
       units: units(tables.UNIT),

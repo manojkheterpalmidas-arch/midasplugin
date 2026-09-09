@@ -43,29 +43,43 @@
     var Conc = mod("concurrent.js", "CfConcurrent");
     var El = mod("elements.js", "CfElements");
 
-    var groupOf = Object.create(null);
     var typeOf = Object.create(null);
-    Object.keys(input.groups || {}).forEach(function (g) {
-      (input.groups[g] || []).forEach(function (m) {
-        groupOf[m.key] = g;
+    var sourcesPresent = [];
+    /* Which items belong to which source. This is what tells an empty cell
+       apart from an absent one: a node IS a member of the reaction source and
+       simply produced no row, while a truss element is not a member of the beam
+       source at all. Those are different facts and the cell must say which. */
+    var memberOf = Object.create(null);
+    Object.keys(input.groups || {}).forEach(function (sid) {
+      if (!(input.groups[sid] || []).length) return;
+      sourcesPresent.push(sid);
+      memberOf[sid] = Object.create(null);
+      input.groups[sid].forEach(function (m) {
         typeOf[m.key] = m.typeLabel;
+        memberOf[sid][m.key] = true;
       });
     });
 
     var gov = input.governing;
     var key = gov ? Conc.describeKey(gov.row.key) : { load: "", stage: "", step: "" };
-    var momentUnit = input.units.FORCE + "·" + input.units.DIST;
+    var effect = input.effect;
+    var effectUnit = El.unitLabel(effect.unit, input.units);
 
     /* ------------------------------------------------------------- header */
 
     var header = [
-      { label: "Key element", value: memberText(input.keyElemKey, typeOf) },
-      { label: "Key component", value: componentText(input.componentId, input.component,
-          input.units, momentUnit) },
+      { label: "Key item", value: memberText(input.keyElemKey, typeOf) },
+      { label: "Key effect", value: effect.label + " — " + effect.sourceLabel +
+          ", in " + effectUnit },
       { label: "Criterion", value: criterionText(input.criterion) },
-      { label: "Output position", value: positionText(input.position) },
-      { label: "Governing value", value: Conc.formatValue(gov ? gov.value : null) + " " +
-          (isMoment(input.componentId) ? momentUnit : input.units.FORCE) },
+      { label: "Output position", value: El.SOURCES[effect.source].partCols
+          ? positionText(input.position)
+          : "not applicable — " + effect.sourceLabel +
+            (El.SOURCES[effect.source].partCols
+              ? " report at the item's nodes"
+              : " report one row per item") },
+      { label: "Governing value", value: Conc.formatValue(gov ? gov.value : null) +
+          " " + effectUnit },
       { label: "Governing load", value: key.load || "(none)" }
     ];
 
@@ -83,10 +97,11 @@
       value: (key.stage || key.step) ? [key.stage, key.step].filter(Boolean).join(" / ")
                                      : "not staged — the model reports no stage or step" });
     header.push({ label: "Units", value: input.units.FORCE + ", " + input.units.DIST +
-      " (moments in " + momentUnit + ")" });
-    header.push({ label: "Elements reported",
-      value: String(countMembers(input.groups)) + " in the set, " +
-        String(input.rows.length) + " rows at this state" });
+      " — every column carries its own unit in the header" });
+    header.push({ label: "Items reported",
+      value: String(Object.keys(typeOf).length) + " in the set, " +
+        String(input.rows.length) + " rows at this state, from " +
+        sourcesPresent.map(function (sid) { return El.SOURCES[sid].label; }).join(" and ") });
     header.push({ label: "Load cases queried",
       value: (input.selection || []).join(", ") || "(none)" });
 
@@ -114,40 +129,76 @@
 
     /* ------------------------------------------------------------ columns */
 
-    var present = Object.keys(input.groups || {}).filter(function (g) {
-      return (input.groups[g] || []).length;
-    });
-    var carried = Object.create(null);
-    present.forEach(function (g) {
-      (El.GROUP_COMPONENTS[g] || []).forEach(function (c) { carried[c] = true; });
-    });
-
+    /* One column per distinct quantity across the sources actually present, in
+       registry order. A reaction FX and a beam Axial are different quantities
+       in different units, so they are different columns — merging them on the
+       grounds that both are "a force" is how a table starts lying. */
     var columns = [
-      { id: "elem", label: "Element", kind: "text" },
-      { id: "type", label: "Type", kind: "text" },
-      { id: "part", label: "Part", kind: "text" }
+      { id: "item", label: "Item", kind: "text" },
+      { id: "type", label: "Type", kind: "text" }
     ];
-    El.COMPONENTS.forEach(function (c) {
-      if (!carried[c.column]) return;
-      columns.push({
-        id: c.column, kind: "number", component: c.id,
-        label: c.column + " (" + (isMoment(c.id) ? momentUnit : input.units.FORCE) + ")"
+    var anyParts = sourcesPresent.some(function (sid) { return !!El.SOURCES[sid].partCols; });
+    if (anyParts) columns.push({ id: "part", label: "Part", kind: "text" });
+
+    var seenCol = Object.create(null);
+    sourcesPresent.forEach(function (sid) {
+      El.SOURCES[sid].components.forEach(function (c) {
+        if (seenCol[c.column]) return;
+        seenCol[c.column] = true;
+        columns.push({
+          id: c.column, kind: "number", component: c.id, unit: c.unit,
+          /* Which source this column came from, so a cell that has no value can
+             say WHY: because the item is of another kind entirely, or because
+             its own table returned no row for it. Those are different facts. */
+          source: sid,
+          label: c.column + " (" + El.unitLabel(c.unit, input.units) + ")"
+        });
       });
     });
 
     /* --------------------------------------------------------------- rows */
 
     var rows = input.rows.map(function (r) {
-      var group = r.group || groupOf[r.elemKey] || null;
+      var src = El.SOURCES[r.source] || null;
+      var carried = Object.create(null);
+      (src ? src.components : []).forEach(function (c) { carried[c.column] = true; });
+
       var cells = columns.map(function (col) {
-        if (col.id === "elem") return { text: r.elemKey, value: r.elemKey };
-        if (col.id === "type") return { text: typeOf[r.elemKey] || "", value: typeOf[r.elemKey] || "" };
-        if (col.id === "part") return { text: r.part, value: r.part };
-        var carriedHere = !group || (El.GROUP_COMPONENTS[group] || []).indexOf(col.id) >= 0;
-        if (!carriedHere) {
-          /* Never a bare blank: an empty cell reads as "not computed". */
+        if (col.id === "item") return { text: r.elemKey, value: r.elemKey };
+        if (col.id === "type") return { text: typeOf[r.elemKey] || (src ? src.noun : ""),
+                                        value: typeOf[r.elemKey] || "" };
+        if (col.id === "part") {
+          return src && src.partCols
+            ? { text: r.part, value: r.part,
+                reason: src.partKind === "node"
+                  ? "this source reports at the item's nodes, not at an I and a J end"
+                  : null }
+            : { text: "—", value: null,
+                reason: "one row per item: " + (src ? src.label : "this source") +
+                        " have no output position" };
+        }
+        if (!carried[col.id]) {
+          /* Never a bare blank: an empty cell reads as "not computed", and a
+             design-force table that showed blanks where the quantity simply
+             does not exist was reported as producing half its output.
+
+             Two different facts hide behind one empty cell, and the reader
+             needs to know which. If the column's own source reads the SAME id
+             space as this row, the item could have had this value and its
+             table returned no row — a free node publishes no reaction. If the
+             source reads a different id space, the quantity does not apply to
+             this kind of item at all. */
+          var colSrc = El.SOURCES[col.source];
+          var belongs = !!(memberOf[col.source] && memberOf[col.source][r.elemKey]);
           return { text: "n/a", value: null,
-                   reason: El.NOT_CARRIED[group] || "not carried by this element type" };
+                   reason: belongs
+                     /* The item IS read from that table — it just produced no
+                        row there. An unrestrained node is the usual case. */
+                     ? colSrc.absent
+                     /* The item is not read from that table at all. */
+                     : (src ? src.absent : "not carried by this item type") +
+                       " (" + col.id + " comes from " +
+                       (colSrc ? colSrc.label : "another table") + ")" };
         }
         var v = r.values[col.id];
         if (v == null) {
@@ -156,10 +207,12 @@
         }
         return { text: Conc.formatValue(v), value: v };
       });
+
       return {
         cells: cells,
-        isKey: r.elemKey === input.keyElemKey,
-        emphasis: (r.elemKey === input.keyElemKey && sameRow(r, gov)) ? input.component : null
+        isKey: r.elemKey === input.keyElemKey && r.source === effect.source,
+        emphasis: (r.elemKey === input.keyElemKey && r.source === effect.source &&
+                   sameRow(r, gov)) ? effect.column : null
       };
     });
 
@@ -168,7 +221,8 @@
       header: header, notes: notes, columns: columns, rows: rows,
       generated: input.generated || null,
       meta: {
-        keyElemKey: input.keyElemKey, component: input.component,
+        keyElemKey: input.keyElemKey, component: effect.column,
+        effectId: effect.id, source: effect.source,
         criterion: input.criterion, position: input.position,
         load: key.load, stage: key.stage, step: key.step,
         units: input.units,
@@ -188,21 +242,9 @@
       Conc.normPart(r.part) === Conc.normPart(gov.row.part);
   }
 
-  function countMembers(groups) {
-    return Object.keys(groups || {}).reduce(function (n, g) {
-      return n + (groups[g] || []).length;
-    }, 0);
-  }
-
-  function isMoment(componentId) { return /^M/.test(String(componentId || "")); }
-
   function memberText(key, typeOf) {
     var t = typeOf[key];
     return key + (t ? " (" + t + ")" : "");
-  }
-
-  function componentText(id, column, units, momentUnit) {
-    return id + " — " + column + ", in " + (isMoment(id) ? momentUnit : units.FORCE);
   }
 
   function criterionText(id) {
@@ -251,7 +293,7 @@
     return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
   }
 
-  var api = { buildReport: buildReport, toCsv: toCsv, isMoment: isMoment };
+  var api = { buildReport: buildReport, toCsv: toCsv };
   if (typeof module === "object" && module.exports) module.exports = api;
   root.CfReport = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

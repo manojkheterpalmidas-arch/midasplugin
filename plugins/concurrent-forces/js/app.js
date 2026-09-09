@@ -225,7 +225,7 @@
     for (var i = 0; i < ids.length; i++) {
       var type = String(rows[ids[i]].TYPE || "").toUpperCase();
       var route = El.ELEM_ROUTING[type];
-      if (route && route.group === "BEAM") return { id: Number(ids[i]), token: "BEAMFORCE" };
+      if (route && route.source === "BEAM") return { id: Number(ids[i]), token: "BEAMFORCE" };
     }
     return null;
   }
@@ -298,9 +298,25 @@
   }
 
   function renderUnits() {
-    fill($("in-component"), El.COMPONENTS.map(function (c) {
-      return { value: c.id, label: c.label + " → " + c.column };
-    }));
+    /* THE DRIVER IS ANY RESULT QUANTITY, not just a beam member force. The list
+       is grouped by source so it is obvious that a reaction and a beam moment
+       are read from different tables — and the effect a user picks is what
+       decides which table the criterion ranges over. */
+    var sel = $("in-component");
+    sel.textContent = "";
+    El.SOURCE_ORDER.forEach(function (sid) {
+      var src = El.SOURCES[sid];
+      var g = document.createElement("optgroup");
+      g.label = src.label + (src.verified ? "" : "  (token probed, not verified)");
+      src.components.forEach(function (c) {
+        var o = option(sid + ":" + c.column, c.label);
+        o.title = src.label + " · column \"" + c.column + "\" · " +
+          El.unitLabel(c.unit, currentUnits());
+        g.appendChild(o);
+      });
+      sel.appendChild(g);
+    });
+    sel.value = "BEAM:Moment-y";
     fill($("in-position"), Conc.POSITIONS.map(function (p) {
       return { value: p.id, label: p.label };
     }));
@@ -322,10 +338,22 @@
 
     fill($("in-force"), Model.FORCE_UNITS.map(function (u) { return { value: u, label: u }; }));
     fill($("in-dist"), Model.DIST_UNITS.map(function (u) { return { value: u, label: u }; }));
+    $("in-force").addEventListener("change", retitleEffects);
+    $("in-dist").addEventListener("change", retitleEffects);
     $("in-force").value = S.model.units.FORCE;
     $("in-dist").value = S.model.units.DIST;
     $("unit-line").textContent = "Defaulted from the model: " + S.model.units.source +
       ". Moments are reported in force × length.";
+  }
+
+  /** Keep each effect's unit tooltip in step with the chosen unit system. */
+  function retitleEffects() {
+    var u = currentUnits();
+    Array.prototype.forEach.call($("in-component").getElementsByTagName("option"), function (o) {
+      var c = El.findComponent(o.value);
+      if (!c) return;
+      o.title = c.sourceLabel + " · column \"" + c.column + "\" · " + El.unitLabel(c.unit, u);
+    });
   }
 
   /**
@@ -478,11 +506,13 @@
       var out = await Run.runAnalysis({
         mapi: S.mapi,
         elems: S.model.elems,
+        nodes: S.model.nodes,
         links: S.model.links,
+        elinks: S.model.elinks,
         loadModel: S.loadModel,
         setText: $("in-set").value,
-        keyElemText: $("in-key-elem").value,
-        componentId: $("in-component").value,
+        keyItemText: $("in-key-elem").value,
+        effectId: $("in-component").value,
         criterion: (document.querySelector("input[name=criterion]:checked") || {}).value || "max",
         position: $("in-position").value,
         selection: Object.keys(S.selection),
@@ -515,8 +545,10 @@
     var stage = doc.header.filter(function (h) { return h.label === "Stage / step"; })[0];
     var resolved = doc.header.filter(function (h) { return h.label === "Resolved"; })[0];
     $("verdict-value").textContent = govValue ? govValue.value : "";
-    $("verdict-where").textContent = "at element " + doc.meta.keyElemKey +
-      " · " + doc.meta.component + " · " + (govLoad ? govLoad.value : "") +
+    var effectHead = doc.header.filter(function (h) { return h.label === "Key effect"; })[0];
+    $("verdict-where").textContent = "at " + doc.meta.keyElemKey +
+      " · " + (effectHead ? effectHead.value.split(",")[0] : doc.meta.component) +
+      " · " + (govLoad ? govLoad.value : "") +
       (stage && /^[^n]/.test(stage.value) ? " · " + stage.value : "");
     $("verdict-resolved").textContent = resolved ? resolved.value : "";
     $("verdict-resolved").hidden = !resolved;
@@ -774,7 +806,8 @@
     var parsed = El.parseSet(text);
     var set = El.parseSet($("in-set").value);
     if (parsed.errors.length || parsed.members.length !== 1) {
-      line.textContent = "Enter one element number (or L5 for a general link).";
+      line.textContent = "One item: 12 for an element, N12 a node, L12 a general " +
+        "link, EL12 an elastic link.";
       line.className = "hint tight bad-text";
       return;
     }
@@ -782,8 +815,8 @@
     var inSet = set.members.some(function (m) { return m.key === key; });
     line.textContent = inSet
       ? key + " is in the set."
-      : key + " is NOT in the element set — the key element must be one of the " +
-        "elements being reported.";
+      : key + " is NOT in the set — the key item must be one of the items being " +
+        "reported, which is what makes the answer checkable.";
     line.className = "hint tight" + (inSet ? "" : " bad-text");
   }
 

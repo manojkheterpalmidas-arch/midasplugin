@@ -27,15 +27,9 @@
     throw new Error(file + " must load before run.js");
   }
 
-  var TOKENS = {
-    /* BEAMFORCE is confirmed in use on a live model. The other two are NOT —
-       tokens are not guessable and a wrong one answers with a message that
-       reads like an un-analysed model, so each is probed against the build
-       rather than assumed, and whichever answers is reported to the user. */
-    BEAM: ["BEAMFORCE"],
-    TRUSS: ["TRUSSFORCE", "TRUSSFORCES", "TRUSS"],
-    GENLINK: ["GENLINKFORCE", "GENERALLINKFORCE", "GLINKFORCE", "GENLINK"]
-  };
+  /* Which result source a run touches is decided by the set and the driver;
+     the tokens themselves live in the source registry in elements.js, so
+     adding a result source does not mean editing this file. */
 
   function fail(message, hint) {
     var e = new Error(message);
@@ -46,9 +40,27 @@
 
   /* ------------------------------------------------------------ validation */
 
+  /** Which quantity the criterion is applied to, and where it is read. */
+  function resolveEffect(input, driverSource) {
+    var El = mod("elements.js", "CfElements");
+    if (input.effectId) {
+      var hit = El.findComponent(input.effectId);
+      if (!hit) throw fail("\"" + input.effectId + "\" is not a result quantity this " +
+        "plugin knows.", "Choose one from the key effect list.");
+      return hit;
+    }
+    /* No explicit effect: take the named component from the driver's own
+       source, which is what the panel does before anything else is chosen. */
+    var src = El.SOURCES[driverSource];
+    var c = (src.components.filter(function (x) { return x.id === input.componentId; })[0]) ||
+            src.components[0];
+    return { source: driverSource, id: driverSource + ":" + c.column, column: c.column,
+             label: c.label, unit: c.unit, sourceLabel: src.label };
+  }
+
   /**
    * Everything that can be checked without touching a result table.
-   * @returns {Object} { members, classified, keyMember, groups, blocked }
+   * @returns {{members, classified, keyElemKey, effect, groups, blocked}}
    */
   function validateInputs(input) {
     var El = mod("elements.js", "CfElements");
@@ -56,16 +68,16 @@
 
     var parsed = El.parseSet(input.setText);
     if (parsed.errors.length) {
-      throw fail("The element set could not be read: " + parsed.errors.join(" "),
-        "Enter numbers, ranges such as 15to20, and general links as L5 — " +
-        "separated by commas.");
+      throw fail("The item set could not be read: " + parsed.errors.join(" "),
+        "Elements are plain numbers, nodes are N12, general links L12, elastic " +
+        "links EL12, and ranges are written 15to20.");
     }
     if (!parsed.members.length) {
       throw fail("The element set is empty.",
-        "Type the elements to report on, pick a structure group, or both.");
+        "Type the items to report on, pick a structure group, or both.");
     }
 
-    var cls = El.classify(parsed.members, input.elems, input.links);
+    var cls = El.classify(parsed.members, input);
 
     if (cls.missing.length) {
       throw fail("Not in the model: " + cls.missing.slice(0, 12).map(function (m) {
@@ -76,24 +88,37 @@
     }
     if (cls.unsupported.length) {
       var u = cls.unsupported[0];
-      throw fail("The set contains " + cls.unsupported.length + " element" +
+      throw fail("The set contains " + cls.unsupported.length + " item" +
         (cls.unsupported.length === 1 ? "" : "s") + " this plugin cannot report on: " +
         cls.unsupported.slice(0, 12).map(function (x) {
           return El.memberLabel(x.member) + " (" + x.type + ")";
         }).join(", ") + ".", u.reason);
     }
 
-    var keyParsed = El.parseSet(input.keyElemText);
+    var keyText = input.keyItemText != null ? input.keyItemText : input.keyElemText;
+    var keyParsed = El.parseSet(keyText);
     if (keyParsed.errors.length || keyParsed.members.length !== 1) {
-      throw fail("The key element must be a single element number.",
-        "One number, or L<number> for a general link.");
+      throw fail("The key item must be a single element, node or link.",
+        "One number for an element, N12 for a node, L12 or EL12 for a link.");
     }
     var keyKey = keyParsed.members[0].key;
-    if (!cls.byKey[keyKey]) {
+    var member = cls.byKey[keyKey];
+    if (!member) {
       throw fail("Key element " + keyKey + " is not a member of the element set.",
-        "The key element nominates which member's extreme picks the structural " +
-        "state, so it has to be one of the elements being reported. Add it to " +
-        "the set, or choose a key element from the set.");
+        "The key item nominates whose extreme picks the structural state, so it " +
+        "has to be one of the items being reported — that is what makes the " +
+        "answer checkable. Add it to the set, or choose a key item from the set.");
+    }
+
+    /* The driver names a SOURCE as well as an item. One item can appear in two
+       tables — a node carries both a reaction and a displacement — and the
+       criterion has to know which quantity it is ranging over. */
+    var effect = resolveEffect(input, member.source);
+    if (member.sources.indexOf(effect.source) < 0) {
+      throw fail("Key item " + keyKey + " has no " + El.SOURCES[effect.source].label +
+        " result.", "It is a " + member.typeLabel + ", which this plugin reads from " +
+        member.sources.map(function (sid) { return El.SOURCES[sid].label; }).join(" and ") +
+        ". Choose a key effect from one of those, or a key item that has this one.");
     }
 
     if (!input.selection || !input.selection.length) {
@@ -113,7 +138,7 @@
 
     return {
       members: parsed.members, classified: cls, keyElemKey: keyKey,
-      groups: cls.groups, blocked: blocked
+      effect: effect, driver: member, groups: cls.groups, blocked: blocked
     };
   }
 
@@ -161,15 +186,18 @@
     var rows = [];
     var calls = [];
 
-    var groupNames = Object.keys(ctx.groups).filter(function (g) {
-      return ctx.groups[g].length;
+    /* One call per SOURCE per family — never per item and never per load case.
+       On a 220-item set across forty combinations that is the difference
+       between a handful of requests and eight thousand. */
+    var sourceIds = El.SOURCE_ORDER.filter(function (sid) {
+      return (ctx.groups[sid] || []).length;
     });
 
-    for (var i = 0; i < groupNames.length; i++) {
-      var g = groupNames[i];
-      var token = await tokenFor(ctx, g);
-      var keys = ctx.groups[g].map(function (m) { return m.id; });
-      var comps = El.GROUP_COMPONENTS[g];
+    for (var i = 0; i < sourceIds.length; i++) {
+      var sid = sourceIds[i];
+      var src = El.SOURCES[sid];
+      var token = await tokenFor(ctx, sid);
+      var keys = ctx.groups[sid].map(function (m) { return m.id; });
 
       /* The construction-stage family is a different MODE, not a filter, so it
          is a separate call — and it needs a stage, because with OPT_CS on and
@@ -178,18 +206,18 @@
       var jobs = [];
       if (series.STD.length) {
         jobs.push({ optCs: false, stageStep: null,
-                    series: series.STD.map(function (s) { return s.request; }) });
+                    series: series.STD.map(function (x) { return x.request; }) });
       }
       if (series.CS.length) {
         (opts.stageSteps || []).forEach(function (st) {
           jobs.push({ optCs: true, stageStep: st,
-                      series: series.CS.map(function (s) { return s.request; }) });
+                      series: series.CS.map(function (x) { return x.request; }) });
         });
       }
 
       for (var j = 0; j < jobs.length; j++) {
         if (ctx.onProgress) {
-          ctx.onProgress("Reading " + El.GROUP_LABEL[g] + " · " +
+          ctx.onProgress("Reading " + src.label + " · " +
             (jobs[j].optCs ? jobs[j].stageStep : "static and combination results"));
         }
         if (ctx.yieldToUi) await ctx.yieldToUi();
@@ -197,21 +225,16 @@
           token: token, keys: keys, series: jobs[j].series,
           optCs: jobs[j].optCs, stageStep: jobs[j].stageStep, unit: ctx.units
         });
-        calls.push({ group: g, token: token, optCs: jobs[j].optCs,
+        calls.push({ source: sid, token: token, optCs: jobs[j].optCs,
                      stageStep: jobs[j].stageStep, got: !!table });
         if (!table) continue;
-        var parsed = Conc.parseTable(table, { group: g, components: comps });
+        var parsed = Conc.parseTable(table, { source: src });
         if (parsed.unresolved.length) {
-          var wanted = parsed.unresolved.filter(function (c) {
-            return c === "Elem" || c === "Load";
-          });
-          if (wanted.length) {
-            throw fail("The " + token + " table did not return a " +
-              wanted.join(" or ") + " column, so its rows cannot be identified.",
-              "The columns it returned were: " + parsed.head.join(", ") + ". " +
-              "Table columns differ per table and this build's names are not the " +
-              "ones this plugin knows.");
-          }
+          throw fail("The " + token + " table did not return a " +
+            parsed.unresolved.join(" or ") + " column, so its rows cannot be identified.",
+            "The columns it returned were: " + parsed.head.join(", ") + ". Table " +
+            "columns differ per table and this build's names are not the ones this " +
+            "plugin knows for " + src.label + ".");
         }
         rows = rows.concat(parsed.rows);
       }
@@ -219,18 +242,19 @@
     return { rows: rows, calls: calls };
   }
 
-  async function tokenFor(ctx, group) {
-    if (ctx.tokens[group]) return ctx.tokens[group];
-    var keys = ctx.groups[group].map(function (m) { return m.id; });
-    var found = await ctx.mapi.resolveToken(TOKENS[group], keys.slice(0, 1), { unit: ctx.units });
+  async function tokenFor(ctx, sourceId) {
+    var El = mod("elements.js", "CfElements");
+    var src = El.SOURCES[sourceId];
+    if (ctx.tokens[sourceId]) return ctx.tokens[sourceId];
+    var keys = ctx.groups[sourceId].map(function (m) { return m.id; });
+    var found = await ctx.mapi.resolveToken(src.tokens, keys.slice(0, 1), { unit: ctx.units });
     if (!found) {
-      throw fail("This build has no result table for " +
-        mod("elements.js", "CfElements").GROUP_LABEL[group] + ".",
-        "Tried " + TOKENS[group].join(", ") + ", and each answered with the " +
-        "\"error creating utbl\" that means the token does not exist. Remove " +
-        "those elements from the set, or report the build so the token can be added.");
+      throw fail("This build has no result table for " + src.label + ".",
+        "Tried " + src.tokens.join(", ") + ", and each answered with the \"error " +
+        "creating utbl\" that means the token does not exist. Remove those items " +
+        "from the set, or report the build so the token can be added.");
     }
-    ctx.tokens[group] = found.token;
+    ctx.tokens[sourceId] = found.token;
     return found.token;
   }
 
@@ -272,10 +296,12 @@
 
   async function diagnose(ctx) {
     try {
-      var g = Object.keys(ctx.groups).filter(function (k) { return ctx.groups[k].length; })[0];
-      if (!g) return [];
+      var El = mod("elements.js", "CfElements");
+      var sid = El.SOURCE_ORDER.filter(function (k) { return (ctx.groups[k] || []).length; })[0];
+      if (!sid) return [];
       return await ctx.mapi.enumerateSeries({
-        token: ctx.tokens[g], keys: [ctx.groups[g][0].id], unit: ctx.units
+        token: ctx.tokens[sid] || await tokenFor(ctx, sid),
+        keys: [ctx.groups[sid][0].id], unit: ctx.units
       });
     } catch (e) { return []; }
   }
@@ -305,14 +331,13 @@
     });
     if (!th.length) return [];
 
-    var g = Object.keys(ctx.groups).filter(function (k) { return ctx.groups[k].length; })[0];
-    var token = await tokenFor(ctx, g);
+    var sid = El.SOURCE_ORDER.filter(function (k) { return (ctx.groups[k] || []).length; })[0];
+    var token = await tokenFor(ctx, sid);
     var table = await ctx.mapi.postTable({
-      token: token, keys: [ctx.groups[g][0].id],
+      token: token, keys: [ctx.groups[sid][0].id],
       series: th.map(function (n) { return n + "(TH)"; }), unit: ctx.units
     });
-    var rows = table ? Conc.parseTable(table, { group: g,
-      components: El.GROUP_COMPONENTS[g] }).rows : [];
+    var rows = table ? Conc.parseTable(table, { source: El.SOURCES[sid] }).rows : [];
 
     var flagged = [];
     th.forEach(function (name) {
@@ -386,16 +411,16 @@
     }
 
     async function load(requests, optCs, stageStep) {
-      var token = await tokenFor(ctx, driver.group);
+      var src = El.SOURCES[driver.source];
+      var token = await tokenFor(ctx, driver.source);
       var table = await ctx.mapi.postTable({
         token: token, keys: [driver.id], series: requests,
         optCs: optCs, stageStep: stageStep, unit: ctx.units
       });
       if (!table) return;
-      var parsed = Conc.parseTable(table, { group: driver.group,
-        components: El.GROUP_COMPONENTS[driver.group] });
+      var parsed = Conc.parseTable(table, { source: src });
       parsed.rows.forEach(function (r) {
-        if (Conc.normPart(r.part) !== Conc.normPart(driver.part)) return;
+        if (src.partCols && Conc.normPart(r.part) !== Conc.normPart(driver.part)) return;
         if (driver.stage && r.stage && r.stage !== driver.stage) return;
         if (driver.step && r.step && r.step !== driver.step) return;
         requests.forEach(function (req) {
@@ -429,16 +454,21 @@
     var El = mod("elements.js", "CfElements");
     var Report = mod("report.js", "CfReport");
 
-    var component = (El.COMPONENTS.filter(function (c) {
-      return c.id === input.componentId;
-    })[0] || El.COMPONENTS[0]).column;
-
     var v = validateInputs(input);
     if (v.blocked.length) throw blockError(v.blocked);
 
+    /* The driver is an ITEM plus an EFFECT, and the effect names its own result
+       source. Nothing downstream assumes the driver is a beam, or an element,
+       or even a member of a force table — a reaction or a displacement at a
+       node picks the state exactly as well, because the join key does all the
+       work of making the answer concurrent. */
+    var effect = v.effect;
+    var component = effect.column;
+
     var ctx = {
       mapi: input.mapi, loadModel: input.loadModel, groups: v.groups,
-      units: input.units, component: component, tokens: Object.create(null),
+      units: input.units, component: component, effect: effect,
+      tokens: Object.create(null),
       onProgress: input.onProgress, yieldToUi: input.yieldToUi
     };
 
@@ -482,15 +512,16 @@
 
     if (ctx.onProgress) ctx.onProgress("Locating the governing state");
     var gov = Conc.findGoverning(q.rows, {
-      keyElemKey: v.keyElemKey, component: component,
+      keyElemKey: v.keyElemKey, component: component, source: effect.source,
       criterion: input.criterion, position: input.position
     });
     if (!gov) {
-      throw fail("No result row was found for key element " + v.keyElemKey +
-        " at " + input.position + ".",
-        "The element returned rows for other positions, or none at all. Check " +
-        "the output position, and that the key element is one the selected " +
-        "cases produce results for.");
+      throw fail("No " + effect.sourceLabel + " row was found for key item " +
+        v.keyElemKey + (El.SOURCES[effect.source].partCols ? " at " + input.position : "") +
+        ".", "The item returned rows for other positions, or none at all. Check " +
+        "the output position, and that the key item is one the selected cases " +
+        "produce " + effect.sourceLabel + " for — a node with no restraint " +
+        "publishes no reaction, for instance.");
     }
 
     /* ------------------ resolve, if the governing load is an envelope ------ */
@@ -502,8 +533,7 @@
     if (Combos.envelopeValued(input.loadModel, envelopeName)) {
       if (ctx.onProgress) ctx.onProgress("Resolving " + envelopeName + " to a single state");
       var driver = {
-        id: v.classified.byKey[v.keyElemKey].id,
-        group: v.classified.byKey[v.keyElemKey].group,
+        id: v.driver.id, source: effect.source,
         part: gov.row.part, stage: gov.row.stage, step: gov.row.step,
         stageStep: stageTokenFor(input.stageSteps, gov.row.stage)
       };
@@ -539,7 +569,8 @@
       /* Gate the reconstruction against what MIDAS itself published, and say
          so in the report rather than assuming it held. */
       var check = rows.filter(function (r) {
-        return r.elemKey === v.keyElemKey && r.key === key &&
+        return r.elemKey === v.keyElemKey && r.source === effect.source &&
+               r.key === key &&
                Conc.normPart(r.part) === Conc.normPart(gov.row.part);
       })[0];
       if (!check || check.values[component] == null) {
@@ -574,9 +605,21 @@
         "not the same as producing zero.");
     }
     if (v.classified.collisions.length) {
-      warnings.push("Ids " + v.classified.collisions.join(", ") + " exist as both an " +
-        "element and a general link. Each was taken as typed; write L" +
-        v.classified.collisions[0] + " to mean the link.");
+      /* Element, node and link ids are separate spaces that collide. Each
+         member was taken as typed, which is right — but silence here is how a
+         set addresses the wrong objects without anybody noticing. */
+      var seenC = Object.create(null);
+      var lines = [];
+      v.classified.collisions.forEach(function (c) {
+        var sig = c.id + "|" + c.taken + "|" + c.also;
+        if (seenC[sig]) return;
+        seenC[sig] = true;
+        lines.push(El.keyOf(c.taken, c.id) + " also exists as " +
+          El.NS_LABEL[c.also] + " " + c.id + " (" + El.keyOf(c.also, c.id) + ")");
+      });
+      warnings.push("Colliding ids, each taken as typed: " +
+        lines.slice(0, 8).join("; ") +
+        (lines.length > 8 ? " and " + (lines.length - 8) + " more" : "") + ".");
     }
     if (partial && partial.partial && partial.partial.length) {
       warnings.push("The opposite sense of " + uniq(partial.partial.map(function (s) {
@@ -586,7 +629,7 @@
     (input.loadModel.warnings || []).forEach(function (w) { warnings.push(w); });
 
     var doc = Report.buildReport({
-      keyElemKey: v.keyElemKey, component: component, componentId: input.componentId,
+      keyElemKey: v.keyElemKey, component: component, effect: effect,
       criterion: input.criterion, position: input.position,
       governing: gov, state: state, envelopeName: envelopeName,
       rows: set, groups: v.groups, units: input.units,
@@ -595,7 +638,7 @@
     });
 
     return {
-      report: doc, governing: gov, state: state, key: key,
+      report: doc, governing: gov, state: state, key: key, effect: effect,
       rows: set, allRows: rows, calls: q.calls, tokens: ctx.tokens,
       classified: v.classified, warnings: warnings
     };
@@ -611,7 +654,8 @@
   }
 
   var api = {
-    TOKENS: TOKENS, fail: fail, validateInputs: validateInputs, blockError: blockError,
+    fail: fail, resolveEffect: resolveEffect,
+    validateInputs: validateInputs, blockError: blockError,
     partitionSelection: partitionSelection, sensesFor: sensesFor,
     subtreeSeries: subtreeSeries, auditTimeHistory: auditTimeHistory,
     runAnalysis: runAnalysis, stageTokenFor: stageTokenFor

@@ -1,6 +1,6 @@
 # Concurrent Forces — MIDAS CIVIL NX
 
-**v1.2.0 · non-mutating**
+**v1.2.1 · non-mutating**
 
 Reports the **coexistent** results across a set of items. You nominate one *key
 item* and one *result quantity*; the plugin finds the load case, combination,
@@ -127,7 +127,7 @@ definition order wins, and every tie is reported in the results header.
 
 ## Running it
 
-Inside CIVIL NX: install `dist/Concurrent Forces v1.2.0.zip` from the Plug-in
+Inside CIVIL NX: install `dist/Concurrent Forces v1.2.1.zip` from the Plug-in
 menu, open it, fill the panel top to bottom, press **Find concurrent forces**.
 
 Without CIVIL NX:
@@ -141,16 +141,16 @@ Serve over **HTTP, not `file://`** — a `file://` page can serve a stale snapsh
 of some scripts while refreshing others, so UI changes appear to do nothing.
 
 ```bash
-node test/run.js      # 230 assertions, no CIVIL NX needed
+node test/run.js      # 247 assertions, no CIVIL NX needed
 ```
 
 Repackage after a change:
 
 ```bash
-node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.2.0.zip"
+node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.2.1.zip"
 # on Windows, equivalently:
-..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.2.0.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.2.0.zip"
+..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.2.1.zip"
+..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.2.1.zip"
 ```
 
 ## What is where
@@ -169,6 +169,42 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.2.
 | `js/app.js` | wiring only — no logic |
 | `mock-midas/server.js` | the API and the static files from one process |
 | `test/run.js` | the offline suite |
+
+## What changed in v1.2.1
+
+Found on a live model, where a run over 1848 elements failed with *"No beam
+elements row was found for key item 109 at I"* — a message that names a
+symptom and no cause.
+
+**A component column that the returned `HEAD` does not contain is no longer
+silent.** `resolveColumns` only recorded *required* roles as unresolved, so a
+missing quantity column left every value reading `undefined`; each row was then
+skipped and the run reported that no result row was found — for a table that
+had answered perfectly well. The driver's own column is now required and names
+the columns that did come back; the rest are reported once, by name, instead of
+only cell by cell.
+
+**A header carrying its unit is matched.** `Moment-y (kN*m)` and `Moment-y` are
+the same column. Matched on the raw header with a boundary check, so `Fx` as a
+synonym for Axial cannot quietly claim a plate's `Fxx` and file an in-plane
+force under an axial heading.
+
+**An empty cell is no longer a zero.** `Number("")` is `0`, so a blank in a
+numeric column arrived as a real, plottable, exportable force of exactly
+nothing — indistinguishable from a genuine zero and reading as a measurement.
+It is `null` now, and the cell says the value was absent.
+
+**An unusable output position is relaxed, visibly.** A build whose part tokens
+are not `Part I`/`Part J` — or a table with no part column at all — would have
+had every row excluded by the default *Both ends*. The filter now stands down
+when the source reports no I/J ends, and the run says it did. The concurrent set
+does not depend on the output position.
+
+**A run that finds nothing says why.** One symptom hid four faults that a reader
+could not tell apart: the item returned no rows at all, it returned rows only in
+another source, it returned rows at output positions the filter excluded, or its
+column for that quantity was empty. Each now has its own message and names its
+evidence — the part tokens, the source that did answer, the columns returned.
 
 ## What changed in v1.2.0
 

@@ -372,37 +372,63 @@
    *          Step and each component column
    */
   function resolveColumns(head, roles) {
-    var lookup = Object.create(null);
-    (head || []).forEach(function (h, i) {
-      var k = norm(h);
-      if (!(k in lookup)) lookup[k] = i;
+    /* Both forms of each header are kept: the normalised one for matching, and
+       the raw one so a header that carries its unit — "Moment-y (kN*m)" — can
+       still be recognised. */
+    var heads = (head || []).map(function (h, i) {
+      return { i: i, raw: String(h == null ? "" : h).toLowerCase().trim(), norm: norm(h) };
     });
+    var lookup = Object.create(null);
+    heads.forEach(function (h) { if (!(h.norm in lookup)) lookup[h.norm] = h.i; });
 
     var index = Object.create(null);
-    var unresolved = [];
+    var unresolved = [];          /* required roles that were not found */
+    var missing = [];             /* component columns that were not found */
     var used = Object.create(null);
 
     /* The item column is claimed FIRST, so a plate table whose part column is
        also called "Node" cannot have its item column stolen by the part role,
        and a node table — where the item is "Node" and there is no part — does
        not end up reporting the node number as its own output position. */
-    take("item", roles.item || ITEM_COLS, true);
-    if (roles.part) take("part", roles.part, false);
-    take("Load", ["Load", "Load Name", "Load Case", "LoadCase"], true);
-    take("Stage", ["Stage", "Const. Stage", "Construction Stage", "CS"], false);
-    take("Step", ["Step", "Step No"], false);
+    take("item", roles.item || ITEM_COLS, "required");
+    if (roles.part) take("part", roles.part, "optional");
+    take("Load", ["Load", "Load Name", "Load Case", "LoadCase"], "required");
+    take("Stage", ["Stage", "Const. Stage", "Construction Stage", "CS"], "optional");
+    take("Step", ["Step", "Step No"], "optional");
     (roles.components || []).forEach(function (c) {
-      take(c, SYNONYMS[c] || [c], false);
+      take(c, SYNONYMS[c] || [c], "component");
     });
 
-    return { index: index, unresolved: unresolved, head: (head || []).slice() };
+    return { index: index, unresolved: unresolved, missing: missing,
+             head: (head || []).slice() };
 
-    function take(role, names, required) {
-      for (var i = 0; i < names.length; i++) {
-        var k = norm(names[i]);
+    function take(role, names, level) {
+      var i, k;
+      /* Pass 1: the header is exactly one of the names we know. */
+      for (i = 0; i < names.length; i++) {
+        k = norm(names[i]);
         if (k in lookup && !used[k]) { used[k] = true; index[role] = lookup[k]; return; }
       }
-      if (required) unresolved.push(role);
+      /* Pass 2: the header is one of them WITH ITS UNIT APPENDED. Matched on
+         the raw header with a boundary check, so "Fx" cannot quietly claim a
+         plate's "Fxx" — which would put an in-plane force under an axial
+         heading and never say a word about it. */
+      for (i = 0; i < names.length; i++) {
+        var want = String(names[i]).toLowerCase().trim();
+        if (want.length < 2) continue;
+        for (var h = 0; h < heads.length; h++) {
+          var got = heads[h];
+          if (used[got.norm]) continue;
+          if (got.raw.length <= want.length) continue;
+          if (got.raw.slice(0, want.length) !== want) continue;
+          if (!/[\s(\[]/.test(got.raw.charAt(want.length))) continue;
+          used[got.norm] = true;
+          index[role] = got.i;
+          return;
+        }
+      }
+      if (level === "required") unresolved.push(role);
+      else if (level === "component") missing.push(role);
     }
   }
 

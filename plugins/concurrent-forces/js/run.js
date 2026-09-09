@@ -229,6 +229,14 @@
                      stageStep: jobs[j].stageStep, got: !!table });
         if (!table) continue;
         var parsed = Conc.parseTable(table, { source: src });
+        /* Keep what each table's HEAD actually resolved to. A component column
+           that was not found is silent otherwise: its values read undefined,
+           every row is skipped, and the run reports "no result row found" —
+           which sends the reader looking at the model instead of at the table. */
+        ctx.columns[sid] = {
+          token: token, head: parsed.head,
+          missing: parsed.missing || [], found: Object.keys(parsed.columns)
+        };
         if (parsed.unresolved.length) {
           throw fail("The " + token + " table did not return a " +
             parsed.unresolved.join(" or ") + " column, so its rows cannot be identified.",
@@ -468,7 +476,7 @@
     var ctx = {
       mapi: input.mapi, loadModel: input.loadModel, groups: v.groups,
       units: input.units, component: component, effect: effect,
-      tokens: Object.create(null),
+      tokens: Object.create(null), columns: Object.create(null),
       onProgress: input.onProgress, yieldToUi: input.yieldToUi
     };
 
@@ -510,19 +518,50 @@
     }
     var partial = await checkSeriesReturned(ctx, series, q.rows);
 
+    /* THE OUTPUT POSITION ONLY MEANS SOMETHING WHERE THERE ARE I AND J ENDS.
+       A build that spells its part tokens differently, or a table that carries
+       no part column at all, would otherwise have every one of its rows
+       excluded by the default "Both ends" — and the run would report that no
+       result row was found for an item the table had answered for perfectly
+       well. Relax it, and SAY SO rather than quietly changing what was asked. */
+    var position = input.position;
+    var earlyNotes = [];
+    var srcRows = q.rows.filter(function (r) { return r.source === effect.source; });
+    var hasIJ = srcRows.some(function (r) {
+      var p = Conc.normPart(r.part);
+      return p === "I" || p === "J";
+    });
+    if (srcRows.length && !hasIJ && position !== "all" &&
+        El.SOURCES[effect.source].partKind === "ij") {
+      var seenParts = uniq(srcRows.map(function (r) { return r.part; }));
+      position = "all";
+      earlyNotes.push("The " + effect.sourceLabel + " table reports at " +
+        seenParts.slice(0, 6).map(function (x) { return "\"" + x + "\""; }).join(", ") +
+        ", not at Part I and Part J, so the output position was ignored and every " +
+        "output point is reported. The concurrent set is unaffected — the join " +
+        "key does not depend on the position.");
+    }
+
+    /* The driver's own column is not optional. If it is not in the returned
+       HEAD there is nothing to apply a criterion to, and saying so — with the
+       columns that DID come back — is the difference between a two-minute fix
+       and an afternoon spent doubting the model. */
+    var colInfo = ctx.columns[effect.source];
+    if (colInfo && colInfo.missing.indexOf(effect.column) >= 0) {
+      throw fail("The " + colInfo.token + " table has no \"" + effect.column +
+        "\" column, so the key effect cannot be read.",
+        "It returned these columns: " + colInfo.head.join(", ") + ". Table column " +
+        "names differ between builds; choose a key effect this table does carry, " +
+        "or report these column names so the mapping can be corrected.");
+    }
+
     if (ctx.onProgress) ctx.onProgress("Locating the governing state");
     var gov = Conc.findGoverning(q.rows, {
       keyElemKey: v.keyElemKey, component: component, source: effect.source,
-      criterion: input.criterion, position: input.position
+      criterion: input.criterion, position: position
     });
-    if (!gov) {
-      throw fail("No " + effect.sourceLabel + " row was found for key item " +
-        v.keyElemKey + (El.SOURCES[effect.source].partCols ? " at " + input.position : "") +
-        ".", "The item returned rows for other positions, or none at all. Check " +
-        "the output position, and that the key item is one the selected cases " +
-        "produce " + effect.sourceLabel + " for — a node with no restraint " +
-        "publishes no reaction, for instance.");
-    }
+    if (!gov) throw noGoverningRow(ctx, v, effect,
+      { position: position, originalPosition: input.position }, q.rows);
 
     /* ------------------ resolve, if the governing load is an envelope ------ */
 
@@ -593,12 +632,12 @@
     /* --------------------------------- the concurrent set ------------------ */
 
     var order = v.members.map(function (m) { return m.key; });
-    var set = Conc.concurrentSet(rows, key, { order: order, position: input.position });
+    var set = Conc.concurrentSet(rows, key, { order: order, position: position });
 
     var reported = uniq(set.map(function (r) { return r.elemKey; }));
     var silent = order.filter(function (k) { return reported.indexOf(k) < 0; });
 
-    var warnings = [];
+    var warnings = earlyNotes.slice();
     if (silent.length) {
       warnings.push("No row at this state for " + silent.join(", ") +
         " — those members produced no result for the governing load, which is " +
@@ -626,11 +665,22 @@
         return s.name; })).join(", ") + " was not returned; only the sense the " +
         "criterion needs was used.");
     }
+    /* Columns this build did not return at all. The cells say "no value in this
+       column" one by one; saying it once, by name, is what lets a wrong column
+       mapping be reported and fixed instead of read as missing results. */
+    Object.keys(ctx.columns).forEach(function (sid) {
+      var info = ctx.columns[sid];
+      if (!info.missing || !info.missing.length) return;
+      warnings.push("The " + info.token + " table returned no " +
+        info.missing.join(", ") + " column. Those cells are empty because the " +
+        "column was absent, not because the value is zero. It returned: " +
+        info.head.join(", ") + ".");
+    });
     (input.loadModel.warnings || []).forEach(function (w) { warnings.push(w); });
 
     var doc = Report.buildReport({
       keyElemKey: v.keyElemKey, component: component, effect: effect,
-      criterion: input.criterion, position: input.position,
+      criterion: input.criterion, position: position,
       governing: gov, state: state, envelopeName: envelopeName,
       rows: set, groups: v.groups, units: input.units,
       selection: input.selection, warnings: warnings, missing: missing,
@@ -642,6 +692,75 @@
       rows: set, allRows: rows, calls: q.calls, tokens: ctx.tokens,
       classified: v.classified, warnings: warnings
     };
+  }
+
+  /**
+   * Why no row governed — answered from the rows that DID come back.
+   *
+   * Three different faults produce one symptom, and the reader cannot tell them
+   * apart from the outside: the item returned nothing at all, it returned rows
+   * at output positions the filter excluded, or it returned rows whose column
+   * for this quantity was empty. Each gets its own message and names the
+   * evidence, so one screenshot settles it.
+   */
+  function noGoverningRow(ctx, v, effect, input, rows) {
+    var Conc = mod("concurrent.js", "CfConcurrent");
+    var El = mod("elements.js", "CfElements");
+    var src = El.SOURCES[effect.source];
+    var info = ctx.columns[effect.source] || { head: [], token: "the result" };
+
+    var mine = rows.filter(function (r) {
+      return r.elemKey === v.keyElemKey && r.source === effect.source;
+    });
+
+    if (!mine.length) {
+      var anySource = rows.filter(function (r) { return r.elemKey === v.keyElemKey; });
+      return fail("The " + info.token + " table returned no row at all for key item " +
+        v.keyElemKey + ".",
+        anySource.length
+          ? "It did return " + anySource.length + " row(s) for " + v.keyElemKey +
+            " from " + uniq(anySource.map(function (r) {
+              return El.SOURCES[r.source].label; })).join(" and ") + ". Choose a key " +
+            "effect from one of those, or check that the selected cases produce " +
+            src.label + " for this item."
+          : "None of the selected load cases produced any result for " + v.keyElemKey +
+            ". Check that it is included in the analysis, and that the cases you " +
+            "ticked were actually run.");
+    }
+
+    var passing = mine.filter(function (r) {
+      return Conc.partAllowed(r.part, input.position, r.hasPart, r.partKind);
+    });
+    if (!passing.length) {
+      return fail("Key item " + v.keyElemKey + " returned " + mine.length +
+        " row(s), but none at the output position you chose.",
+        "The table reports it at: " + uniq(mine.map(function (r) {
+          return "\"" + r.part + "\""; })).join(", ") + ". Your output position is " +
+        positionName(input.position) + ". Change the output position to match, or " +
+        "use All output points.");
+    }
+
+    var withValue = passing.filter(function (r) {
+      return r.values[effect.column] != null && isFinite(r.values[effect.column]);
+    });
+    if (!withValue.length) {
+      return fail("Key item " + v.keyElemKey + " returned " + passing.length +
+        " row(s), but the \"" + effect.column + "\" column is empty in every one.",
+        "The " + info.token + " table returned these columns: " +
+        info.head.join(", ") + ". Either this build reports that quantity under " +
+        "another name, or the selected cases produce no value for it here.");
+    }
+
+    return fail("No usable " + src.label + " row was found for key item " +
+      v.keyElemKey + ".", "It returned " + mine.length + " row(s) at " +
+      uniq(mine.map(function (r) { return r.part || "(no part)"; })).join(", ") +
+      " for " + uniq(mine.map(function (r) { return r.load; })).slice(0, 6).join(", ") + ".");
+  }
+
+  function positionName(id) {
+    var Conc = mod("concurrent.js", "CfConcurrent");
+    var p = Conc.POSITIONS.filter(function (x) { return x.id === id; })[0];
+    return p ? "\"" + p.label + "\"" : String(id);
   }
 
   /** The stage/step token that covers a stage name reported in a result row. */
@@ -658,6 +777,7 @@
     validateInputs: validateInputs, blockError: blockError,
     partitionSelection: partitionSelection, sensesFor: sensesFor,
     subtreeSeries: subtreeSeries, auditTimeHistory: auditTimeHistory,
+    noGoverningRow: noGoverningRow,
     runAnalysis: runAnalysis, stageTokenFor: stageTokenFor
   };
   if (typeof module === "object" && module.exports) module.exports = api;

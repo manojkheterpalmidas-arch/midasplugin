@@ -871,6 +871,123 @@ async function raw(mapi, opts) {
   }
 
   /* ==================================================================== */
+  section("a run that finds nothing says WHY");
+  {
+    /* One symptom — "no result row found" — hides three different faults, and
+       the reader cannot tell them apart from outside the plugin. Each has to
+       name its own evidence, or the next hour goes on doubting the model. */
+    const base = {
+      setText: "1, 2, 3", keyItemText: "1", criterion: "max", position: "both",
+      selection: ["DL", "SDL", "LL"]
+    };
+
+    /* 1 — the driver's own column is not in the HEAD at all. Silent before
+           this: every value read undefined, every row was skipped, and the run
+           reported "no row found" for a table that had returned plenty. */
+    mock.state.dropColumn = "Moment-y";
+    const dropped = await throws(() => analyse(ctx,
+      Object.assign({}, base, { effectId: "BEAM:Moment-y" })));
+    mock.state.dropColumn = null;
+    ok(dropped && /has no "Moment-y" column/.test(dropped.message),
+      "a missing driver column is named, not swallowed", dropped && dropped.message);
+    ok(/It returned these columns: Elem, Load/.test(dropped.hint || ""),
+      "and the columns that DID come back are listed",
+      dropped && dropped.hint);
+
+    /* The run still works for a column that IS there. */
+    mock.state.dropColumn = "Moment-y";
+    const still = await analyse(ctx, Object.assign({}, base, { effectId: "BEAM:Axial" }));
+    mock.state.dropColumn = null;
+    ok(still.governing, "and another quantity in the same table still runs");
+    ok(still.warnings.some((w) => /returned no Moment-y column/.test(w)),
+      "and the absent column is reported once, by name, rather than only " +
+      "cell by cell", JSON.stringify(still.warnings));
+
+    /* 2 — the item returns rows, but at output positions the filter excludes. */
+    /* A build whose part tokens are spelled differently must not lose every
+       row to the default output position. The filter is relaxed and the run
+       SAYS it relaxed it — the concurrent set does not depend on the position. */
+    mock.state.partLabels = ["Start", "End"];
+    const oddParts = await analyse(ctx,
+      Object.assign({}, base, { effectId: "BEAM:Axial", position: "both" }));
+    mock.state.partLabels = null;
+    ok(oddParts.governing, "an unfamiliar part vocabulary still produces an answer");
+    ok(oddParts.warnings.some((w) => /output position was ignored/.test(w)),
+      "and the run says the position was ignored rather than doing it silently",
+      JSON.stringify(oddParts.warnings));
+    ok(oddParts.rows.some((r) => r.part === "Start") &&
+       oddParts.rows.some((r) => r.part === "End"),
+      "both output points are reported");
+
+    /* 3 — the column is present and empty in every row. */
+    mock.state.blankColumn = "Axial";
+    const blank = await throws(() => analyse(ctx,
+      Object.assign({}, base, { effectId: "BEAM:Axial" })));
+    mock.state.blankColumn = null;
+    ok(blank && /column is empty in every one/.test(blank.message),
+      "an empty column is distinguished from a missing one", blank && blank.message);
+
+    /* Number("") is 0. A blank in a numeric column must NOT arrive as a real,
+       plottable, exportable force of exactly nothing — that is worse than no
+       value at all, because it is indistinguishable from a genuine zero. */
+    const blankRow = Conc.parseTable(
+      { HEAD: ["Elem", "Load", "Part", "Axial"], DATA: [["1", "DL", "Part I", ""]] },
+      { source: El.SOURCES.BEAM });
+    eq(blankRow.rows[0].values.Axial, null, "an empty cell is null, never zero");
+    const zeroRow = Conc.parseTable(
+      { HEAD: ["Elem", "Load", "Part", "Axial"], DATA: [["1", "DL", "Part I", 0]] },
+      { source: El.SOURCES.BEAM });
+    eq(zeroRow.rows[0].values.Axial, 0, "and a genuine zero is still a zero");
+
+    /* 4 — the item produced nothing in this source, but did in another. */
+    const nodeOnly = await throws(() => analyse(ctx, {
+      setText: "N1, 1", keyItemText: "N7", effectId: "REACTION:FZ",
+      criterion: "max", position: "both", selection: ["DL"] }));
+    ok(nodeOnly && /not a member of the element set/i.test(nodeOnly.message),
+      "an item outside the set is still caught first");
+
+    const freeNode = await throws(() => analyse(ctx, {
+      setText: "N7", keyItemText: "N7", effectId: "REACTION:FZ",
+      criterion: "max", position: "both", selection: ["DL"] }));
+    ok(freeNode && /no row at all for key item N7/.test(freeNode.message),
+      "an unrestrained node driving a reaction is told plainly",
+      freeNode && freeNode.message);
+    ok(/node displacements/.test(freeNode.hint || ""),
+      "and pointed at the source that DID answer for it", freeNode && freeNode.hint);
+  }
+
+  /* ==================================================================== */
+  section("column names are matched, not assumed");
+  {
+    /* A header that carries its unit — "Moment-y (kN*m)" — is the same column.
+       Matching it on the raw header with a boundary check is what keeps "Fx"
+       from quietly claiming a plate's "Fxx" and filing an in-plane force under
+       an axial heading. */
+    mock.state.headerUnits = true;
+    const withUnits = await analyse(ctx, {
+      setText: "1, 2, 3", keyItemText: "1", effectId: "BEAM:Moment-y",
+      criterion: "max", position: "both", selection: ["DL", "SDL", "LL"] });
+    mock.state.headerUnits = false;
+    ok(withUnits.governing, "a unit-suffixed header still resolves");
+
+    const plain = await analyse(ctx, {
+      setText: "1, 2, 3", keyItemText: "1", effectId: "BEAM:Moment-y",
+      criterion: "max", position: "both", selection: ["DL", "SDL", "LL"] });
+    near(withUnits.governing.value, plain.governing.value,
+      "and gives the same answer as the plain header");
+
+    const fx = El.resolveColumns(["Elem", "Load", "Node", "Fxx", "Fyy"], {
+      item: El.SOURCES.PLATE.itemCols, part: El.SOURCES.PLATE.partCols,
+      components: ["Fxx", "Fyy"] });
+    eq(fx.index.Fxx, 3, "a plate's Fxx is its own column");
+    const axial = El.resolveColumns(["Elem", "Load", "Part", "Fxx"], {
+      item: El.SOURCES.BEAM.itemCols, part: El.SOURCES.BEAM.partCols,
+      components: ["Axial"] });
+    eq(axial.missing.join(","), "Axial",
+      "and \"Fx\" as a synonym for Axial does NOT claim it");
+  }
+
+  /* ==================================================================== */
   section("the API base is settled, not assumed");
   {
     /* The failure this exists to stop: the host's redirectTo does not carry the

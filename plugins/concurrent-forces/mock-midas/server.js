@@ -48,7 +48,18 @@ const ROOT_DIR = path.resolve(__dirname, "..");
    Set MOCK_ANALYSED=0 to exercise the un-analysed model. */
 const state = {
   session: process.env.MOCK_SESSION || "connected",
-  analysed: process.env.MOCK_ANALYSED !== "0"
+  analysed: process.env.MOCK_ANALYSED !== "0",
+  /* Build-to-build differences a plugin has to survive, switchable so the
+     suite can reproduce them:
+       headerUnits  headers carry their unit, "Moment-y (kN*m)"
+       dropColumn   this build reports that quantity under another name, so the
+                    column is simply not in the HEAD
+       blankColumn  the column is there and every value in it is empty
+       partLabels   the part tokens are spelled differently */
+  headerUnits: false,
+  dropColumn: null,
+  blankColumn: null,
+  partLabels: null
 };
 
 /* ------------------------------------------------------------------ model -- */
@@ -453,20 +464,36 @@ function buildTable(spec, keys, seriesIn, optCs, stageStep, unit) {
   const fD = DIST_FACTOR[unit.DIST] == null ? 1 : DIST_FACTOR[unit.DIST];
 
   const partCol = spec.parts === null ? null : (spec.partCol || "Part");
+  const comps = spec.comps.filter((c) => c !== state.dropColumn);
+  const unitOf = (c) => {
+    const k = UNIT_KIND[c];
+    if (k === "F") return unit.FORCE;
+    if (k === "FL") return unit.FORCE + "*" + unit.DIST;
+    if (k === "F/L") return unit.FORCE + "/" + unit.DIST;
+    if (k === "FL/L") return unit.FORCE + "*" + unit.DIST + "/" + unit.DIST;
+    if (k === "L") return unit.DIST;
+    return "rad";
+  };
   const HEAD = [spec.item, "Load", "Stage", "Step"]
     .concat(partCol ? [partCol] : [])
-    .concat(spec.comps.map((c) => (spec.rename && spec.rename[c]) || c));
+    .concat(comps.map((c) => {
+      const name = (spec.rename && spec.rename[c]) || c;
+      return state.headerUnits ? name + " (" + unitOf(c) + ")" : name;
+    }));
 
   const ids = elementsOfGroup(spec.group, keys).filter((id) => !spec.only || spec.only(id));
   const DATA = [];
   ids.forEach((id) => {
-    const parts = partCol ? (spec.partsOf ? spec.partsOf(id) : spec.parts) : [null];
+    const parts = partCol
+      ? (spec.partsOf ? spec.partsOf(id) : (state.partLabels || spec.parts))
+      : [null];
     seriesIn.forEach((p) => {
       stepsFor(p, stageStep).forEach((ss) => {
         parts.forEach((part) => {
           const row = [String(id), responseLabel(p), ss.stage, ss.step]
             .concat(partCol ? [part] : []);
-          spec.comps.forEach((comp) => {
+          comps.forEach((comp) => {
+            if (comp === state.blankColumn) { row.push(""); return; }
             const v = valueOf(p.name, p.sense, id + ":" + spec.group, part || "", comp, ss.stage, ss.step);
             const scaled = v == null ? null : v * unitScale(comp, fF, fD);
             row.push(scaled == null ? "" : Number(scaled.toPrecision(9)));

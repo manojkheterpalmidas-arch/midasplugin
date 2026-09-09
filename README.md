@@ -89,7 +89,7 @@ So does the finished plugin in `plugins/concurrent-forces`:
 ```bash
 cd plugins/concurrent-forces
 node mock-midas/server.js     # then open the URL it prints
-node test/run.js              # 230 assertions, no CIVIL NX needed
+node test/run.js              # 247 assertions, no CIVIL NX needed
 ```
 
 ## A taste of what's inside
@@ -136,7 +136,7 @@ combinations are **resolved** instead — recursively, to a single-valued leaf o
 a weighted sum, gated against the value MIDAS itself publishes, and displayed as
 *"ULS_Env resolved to ULS_Comb_07"*.
 
-Install `plugins/concurrent-forces/dist/Concurrent Forces v1.2.0.zip` from the
+Install `plugins/concurrent-forces/dist/Concurrent Forces v1.2.1.zip` from the
 CIVIL NX Plug-in menu. The plugin's own readme records what is verified and what
 was probed at runtime rather than assumed.
 

@@ -70,14 +70,20 @@
       };
       components.forEach(function (c) {
         if (ix[c] == null) return;
-        var v = Number(d[ix[c]]);
+        var cellValue = d[ix[c]];
+        /* An EMPTY cell is not a zero. Number("") is 0, so a blank in a numeric
+           column would otherwise arrive as a real, plottable, exportable force
+           of exactly nothing — the worst kind of wrong, because it is
+           indistinguishable from a genuine zero and reads as a measurement. */
+        var v = (cellValue === "" || cellValue == null) ? NaN : Number(cellValue);
         row.values[c] = isFinite(v) ? v : null;
       });
       row.key = joinKey(row);
       rows.push(row);
     });
 
-    return { rows: rows, columns: cols.index, unresolved: cols.unresolved, head: cols.head };
+    return { rows: rows, columns: cols.index, unresolved: cols.unresolved,
+             missing: cols.missing, head: cols.head };
   }
 
   function cell(d, i) {

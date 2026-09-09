@@ -1,6 +1,6 @@
 # Concurrent Forces — MIDAS CIVIL NX
 
-**v1.2.1 · non-mutating**
+**v1.3.0 · non-mutating**
 
 Reports the **coexistent** results across a set of items. You nominate one *key
 item* and one *result quantity*; the plugin finds the load case, combination,
@@ -127,7 +127,7 @@ definition order wins, and every tie is reported in the results header.
 
 ## Running it
 
-Inside CIVIL NX: install `dist/Concurrent Forces v1.2.1.zip` from the Plug-in
+Inside CIVIL NX: install `dist/Concurrent Forces v1.3.0.zip` from the Plug-in
 menu, open it, fill the panel top to bottom, press **Find concurrent forces**.
 
 Without CIVIL NX:
@@ -141,16 +141,16 @@ Serve over **HTTP, not `file://`** — a `file://` page can serve a stale snapsh
 of some scripts while refreshing others, so UI changes appear to do nothing.
 
 ```bash
-node test/run.js      # 247 assertions, no CIVIL NX needed
+node test/run.js      # 269 assertions, no CIVIL NX needed
 ```
 
 Repackage after a change:
 
 ```bash
-node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.2.1.zip"
+node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.3.0.zip"
 # on Windows, equivalently:
-..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.2.1.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.2.1.zip"
+..\..\assets\scripts\pack.ps1 -Source . -Out "dist\Concurrent Forces v1.3.0.zip"
+..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "dist\Concurrent Forces v1.3.0.zip"
 ```
 
 ## What is where
@@ -165,10 +165,29 @@ node ../../assets/scripts/pack.js --source . --out "dist/Concurrent Forces v1.2.
 | `js/concurrent.js` | join keys, the governing row, the concurrent filter |
 | `js/report.js` | one neutral document; the table and the CSV are walkers over it |
 | `js/chart.js` | the distribution chart, as a spec — no DOM, no markup |
+| `js/diag.js` | the diagnostics report — what the build actually returned |
 | `js/run.js` | the data flow, with the network injected |
 | `js/app.js` | wiring only — no logic |
 | `mock-midas/server.js` | the API and the static files from one process |
 | `test/run.js` | the offline suite |
+
+## What changed in v1.3.0
+
+**Probe result tables**, next to Refresh. It asks the build one question per
+source — which of the candidate tokens exists, what the `HEAD` columns are
+called, which of them this plugin recognises, what tokens the `Part` column
+carries, a sample row, and how many series the model publishes — then writes it
+all into a **Diagnostics** block with a *Copy* button.
+
+It is a read: `LOAD_CASE_NAMES: []` enumerates and returns the `HEAD` with it,
+so one call per source settles everything. Nothing is written and nothing is
+assumed; every line in the report is something the API returned.
+
+This exists because the API differs between builds in ways no documentation
+settles, and the model that matters is usually one only its owner can reach. A
+question like *"is your Part column spelled `Part I` or `I`?"* costs a round
+trip each time it is asked; the probe answers all of them at once, in a form
+that can be pasted straight back.
 
 ## What changed in v1.2.1
 

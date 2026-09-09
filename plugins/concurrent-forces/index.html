@@ -28,7 +28,7 @@
       <img src="./icon.svg" alt="" class="brand-icon">
       <div>
         <h1>Concurrent Forces</h1>
-        <p>MIDAS CIVIL NX &middot; v1.2.1</p>
+        <p>MIDAS CIVIL NX &middot; v1.3.0</p>
       </div>
     </div>
     <div class="head-actions">
@@ -77,6 +77,8 @@
         CIVIL NX must be open, and the model analysed. A key keeps verifying
         after the program closes, so the live session is checked too.
       </p>
+      <button id="btn-probe" class="btn ghost" type="button"
+              title="Ask this build which result tables it has, and what its columns are actually called. A read — it changes nothing.">Probe result tables</button>
       <button id="btn-connect" class="btn ghost" type="button"
               title="Re-verify the session and re-read the model">Refresh</button>
     </div>
@@ -89,6 +91,21 @@
           <tbody id="model-body"></tbody>
         </table>
       </div>
+    </details>
+
+    <!-- The API differs between builds in ways no documentation settles: which
+         table tokens exist, what the HEAD columns are called, what the Part
+         column carries. On a model nobody else can reach, this is how those
+         questions get answered — the plugin reports the evidence rather than
+         the next hour going on guesses. -->
+    <details id="diag-block">
+      <summary>Diagnostics — what this build actually returned</summary>
+      <div class="row">
+        <button id="btn-diag-copy" class="btn" type="button">Copy diagnostics</button>
+        <span id="diag-line" class="hint">Press <strong>Probe result tables</strong>
+          first to include every table's columns.</span>
+      </div>
+      <textarea id="diag-text" class="csv-text" readonly rows="14"></textarea>
     </details>
   </section>
 
@@ -260,6 +277,7 @@
 <script src="./js/concurrent.js"></script>
 <script src="./js/report.js"></script>
 <script src="./js/chart.js"></script>
+<script src="./js/diag.js"></script>
 <script src="./js/model.js"></script>
 <script src="./js/run.js"></script>
 <script src="./js/app.js"></script>

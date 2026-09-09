@@ -15,12 +15,17 @@
   var Report = root.CfReport;
   var Run = root.CfRun;
   var Chart = root.CfChart;
+  var Diag = root.CfDiag;
 
   var S = {
     mapi: null, connected: false, model: null, loadModel: null,
     selection: Object.create(null), stageSteps: Object.create(null),
-    blocked: Object.create(null), result: null, csv: ""
+    blocked: Object.create(null), result: null, csv: "",
+    probes: null, lastError: null, diag: ""
   };
+
+  /* Kept in step with manifest.json and the header line by the offline suite. */
+  var VERSION = "1.3.0";
 
   function $(id) { return document.getElementById(id); }
 
@@ -503,6 +508,7 @@
     try {
       var units = currentUnits();
       S.mapi.unit = units;
+      var input_criterion = (document.querySelector("input[name=criterion]:checked") || {}).value || "max";
       var out = await Run.runAnalysis({
         mapi: S.mapi,
         elems: S.model.elems,
@@ -513,7 +519,7 @@
         setText: $("in-set").value,
         keyItemText: $("in-key-elem").value,
         effectId: $("in-component").value,
-        criterion: (document.querySelector("input[name=criterion]:checked") || {}).value || "max",
+        criterion: input_criterion,
         position: $("in-position").value,
         selection: Object.keys(S.selection),
         units: units,
@@ -523,6 +529,15 @@
         yieldToUi: yieldToUi
       });
       S.result = out;
+      S.lastError = null;
+      S.lastRun = {
+        keyElemKey: out.report.meta.keyElemKey,
+        effect: out.effect.id + " (" + out.effect.label + ")",
+        criterion: input_criterion, position: $("in-position").value,
+        key: out.report.meta.load + " / " + (out.report.meta.stage || "-") +
+             " / " + (out.report.meta.step || "-"),
+        rows: out.rows.length, calls: out.calls, warnings: out.warnings
+      };
       await renderResult(out.report);
       progress("Done · " + out.rows.length + " rows at the governing state · " +
         S.mapi.calls + " requests", 1);
@@ -750,6 +765,66 @@
     $("csv-line").textContent = S.csv.length + " characters, selected and ready to copy.";
   }
 
+  /* ---------------------------------------------------------- diagnostics */
+
+  /** Ask the build what it has. A read — it changes nothing. */
+  async function probe() {
+    if (!S.connected) { showError({ message: "Connect first." }); return; }
+    $("btn-probe").disabled = true;
+    clearError();
+    try {
+      S.probes = await Run.probeSources({
+        mapi: S.mapi, elems: S.model.elems, nodes: S.model.nodes,
+        links: S.model.links, elinks: S.model.elinks, units: currentUnits(),
+        onProgress: function (line) { progress(line, null); }
+      });
+      writeDiagnostics();
+      $("diag-block").open = true;
+      var found = S.probes.filter(function (r) { return r.token; }).length;
+      var broken = S.probes.filter(function (r) {
+        return r.missing && r.missing.length; }).length;
+      $("diag-line").textContent = found + " result table(s) answered" +
+        (broken ? "; " + broken + " returned columns this plugin does not " +
+          "recognise — the report below names them." : ". Every column was recognised.");
+      progress("Probe complete · " + S.mapi.calls + " requests", 1);
+      $("diag-block").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (err) {
+      showError(err);
+    } finally {
+      $("btn-probe").disabled = false;
+    }
+  }
+
+  function writeDiagnostics() {
+    S.diag = Diag.buildDiagnostics({
+      version: VERSION,
+      base: S.mapi ? S.mapi.base : null,
+      baseInfo: S.baseInfo,
+      model: S.model,
+      probes: S.probes || [],
+      lastRun: S.lastRun || null,
+      lastError: S.lastError,
+      generated: new Date().toISOString()
+    });
+    $("diag-text").value = S.diag;
+  }
+
+  async function copyDiagnostics() {
+    writeDiagnostics();
+    $("diag-block").open = true;
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard API");
+      await navigator.clipboard.writeText(S.diag);
+      $("diag-line").textContent = "Copied " + S.diag.length + " characters to the clipboard.";
+    } catch (e) {
+      $("diag-line").textContent = "The clipboard was not available (" + (e.message || e) +
+        "). The text is selected below — copy it by hand.";
+      var ta = $("diag-text");
+      ta.focus();
+      ta.select();
+    }
+  }
+
   /* ------------------------------------------------------------------ bits */
 
   function progress(line, fraction) {
@@ -782,6 +857,9 @@
   }
 
   function showError(err) {
+    /* Kept so the diagnostics block can carry it: the message a user pastes
+       back is worth far more with the model's own table columns beside it. */
+    S.lastError = { message: err.message || String(err), hint: err.hint || "" };
     var box = $("error");
     box.hidden = false;
     /* An error gets a HINT, not an echo. "second query is wrong" helps nobody. */
@@ -830,6 +908,8 @@
   function init() {
     wireHost();
     $("btn-connect").addEventListener("click", connect);
+    $("btn-probe").addEventListener("click", probe);
+    $("btn-diag-copy").addEventListener("click", copyDiagnostics);
     $("btn-connect-dev").addEventListener("click", connect);
     $("btn-run").addEventListener("click", run);
     $("btn-csv").addEventListener("click", exportCsv);

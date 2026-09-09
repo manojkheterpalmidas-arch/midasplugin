@@ -28,6 +28,7 @@ const Report = require(path.join(JS, "report.js"));
 const Model = require(path.join(JS, "model.js"));
 const Run = require(path.join(JS, "run.js"));
 const ChartM = require(path.join(JS, "chart.js"));
+const DiagM = require(path.join(JS, "diag.js"));
 const mock = require(path.join(__dirname, "..", "mock-midas", "server.js"));
 
 const PORT = 8781;
@@ -1098,6 +1099,80 @@ async function raw(mapi, opts) {
   }
 
   /* ==================================================================== */
+  section("the plugin can report what the build actually returned");
+  {
+    /* This session cannot reach a live CIVIL NX, and neither can anyone
+       debugging a model on someone else's machine. The probe is how the
+       questions no documentation settles get answered: which tokens exist,
+       what the columns are called, what the Part column carries. */
+    const probes = await Run.probeSources({
+      mapi: ctx.mapi, elems: ctx.model.elems, nodes: ctx.model.nodes,
+      links: ctx.model.links, elinks: ctx.model.elinks, unit: ctx.mapi.unit,
+      units: ctx.mapi.unit
+    });
+    eq(probes.length, El.SOURCE_ORDER.length, "every source is probed");
+
+    const beam = probes.find((p) => p.source === "BEAM");
+    eq(beam.token, "BEAMFORCE", "the token it settled on is recorded");
+    ok(beam.head.length > 5, "the HEAD it returned is recorded", beam.head.join(","));
+    eq(beam.missing.length, 0, "and which columns were not recognised");
+    eq(beam.parts.join(","), "Part I,Part J",
+      "the PART TOKENS are recorded — the one thing that decides whether an " +
+      "output position filter works at all");
+    ok(beam.sample, "with a sample row, so the values can be sanity-checked");
+    ok(beam.series.length > 10, "and what the model publishes");
+
+    /* The probe records the tokens it had to try and discard. */
+    const link = probes.find((p) => p.source === "GENLINK");
+    eq(link.token, "GENERALLINKFORCE", "a probed-past token is resolved");
+    ok(link.tried.some((t) => /creating utbl/.test(t.message)),
+      "and the ones that failed are recorded with what they said",
+      JSON.stringify(link.tried));
+
+    /* A plate's part column carries node numbers, not I and J. */
+    const plate = probes.find((p) => p.source === "PLATE");
+    ok(plate.parts.every((x) => /^\d+$/.test(x)),
+      "a plate's part tokens are node numbers", JSON.stringify(plate.parts));
+
+    /* A node table has no part column at all. */
+    const react = probes.find((p) => p.source === "REACTION");
+    eq(react.parts, null, "a node source records no part tokens");
+
+    /* A source the model has nothing for says so rather than erroring. */
+    const empty = await Run.probeSources({
+      mapi: ctx.mapi, elems: {}, nodes: null, links: null, elinks: null,
+      units: ctx.mapi.unit });
+    ok(empty.every((p) => p.skipped), "an empty model skips every source with a reason");
+
+    /* An unrecognised column name is what the probe exists to surface. */
+    mock.state.dropColumn = "Moment-y";
+    const gapped = await Run.probeSources({
+      mapi: ctx.mapi, elems: ctx.model.elems, nodes: ctx.model.nodes,
+      links: ctx.model.links, elinks: ctx.model.elinks, units: ctx.mapi.unit });
+    mock.state.dropColumn = null;
+    eq(gapped.find((p) => p.source === "BEAM").missing.join(","), "Moment-y",
+      "a column this build does not carry is named");
+
+    /* ---- and it renders to something a person can paste back ---------- */
+    const text = DiagM.buildDiagnostics({
+      version: "1.3.0", base: BASE,
+      baseInfo: { tried: [{ base: BASE, status: "ok" }], changed: false, resolved: true },
+      model: ctx.model, probes: probes,
+      lastError: { message: "something went wrong", hint: "here is why" },
+      generated: "2026-01-01T00:00:00Z"
+    });
+    ok(/BEAMFORCE/.test(text), "the report names the tokens");
+    ok(/Part I/.test(text), "and the part tokens");
+    ok(/HEAD/.test(text), "and the HEAD");
+    ok(/something went wrong/.test(text), "and the last error");
+    ok(/bSV_STEP/.test(text), "and which stages saved steps");
+    ok(/read from the model/.test(text), "and where the units came from");
+    ok(!/undefined/.test(text), "with no undefined leaking into it");
+    ok(text.length > 800 && text.length < 40000,
+      "at a size a person can paste", String(text.length));
+  }
+
+  /* ==================================================================== */
   section("window shell");
   /* STRUCTURAL, because the close button is the most-broken part of a CIVIL NX
      plugin and every one of these failures shipped on a real one. */
@@ -1175,6 +1250,8 @@ async function raw(mapi, opts) {
       "the version in index.html matches manifest.json");
     const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, "package.json"), "utf8"));
     eq(pkg.version, manifest.version, "and package.json matches too");
+    ok(app.indexOf('VERSION = "' + manifest.version + '"') > 0,
+      "and the version the diagnostics report prints matches the manifest");
     eq(pkg.type, "commonjs", "the local package.json keeps these files CommonJS");
   }
 

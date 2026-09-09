@@ -266,6 +266,100 @@
     return found.token;
   }
 
+  /* -------------------------------------------------------------- probing */
+
+  /**
+   * Ask this build what it actually has, one source at a time.
+   *
+   * The API differs between builds in ways no documentation settles: which
+   * table tokens exist, what the HEAD columns are called, what tokens the Part
+   * column carries. On a model that only the user can reach, this is how those
+   * questions get answered — the plugin reports the evidence instead of a
+   * conversation running on guesses.
+   *
+   * It is a read: `LOAD_CASE_NAMES: []` enumerates what the model publishes and
+   * returns the HEAD with it, so one call per source settles everything.
+   *
+   * @returns {Array} one record per source, safe to render even where it failed
+   */
+  async function probeSources(input) {
+    var El = mod("elements.js", "CfElements");
+    var Conc = mod("concurrent.js", "CfConcurrent");
+    var out = [];
+
+    for (var i = 0; i < El.SOURCE_ORDER.length; i++) {
+      var sid = El.SOURCE_ORDER[i];
+      var src = El.SOURCES[sid];
+      var rec = { source: sid };
+      if (input.onProgress) input.onProgress("Probing " + src.label);
+
+      var item = candidateFor(sid, src, input);
+      if (item == null) {
+        rec.skipped = "the model holds no items of this kind";
+        out.push(rec);
+        continue;
+      }
+      rec.item = item;
+
+      try {
+        var found = await input.mapi.resolveToken(src.tokens, [item], { unit: input.units });
+        if (!found) {
+          rec.tried = (src.tokens || []).map(function (t) {
+            return { token: t, message: "no such table token in this build" };
+          });
+          rec.error = "no token from " + src.tokens.join(", ") + " exists in this build";
+          out.push(rec);
+          continue;
+        }
+        rec.token = found.token;
+        rec.tried = found.tried || [];
+
+        var table = found.table;
+        if (!table) {
+          rec.error = "the token exists but the model published nothing for item " + item;
+          out.push(rec);
+          continue;
+        }
+        rec.head = table.HEAD || [];
+        rec.sample = (table.DATA || [])[0] || null;
+
+        var cols = El.resolveColumns(rec.head, {
+          item: src.itemCols, part: src.partCols,
+          components: src.components.map(function (c) { return c.column; })
+        });
+        rec.resolved = cols.index;
+        rec.missing = (cols.unresolved || []).concat(cols.missing || []);
+
+        var parsed = Conc.parseTable(table, { source: src });
+        rec.parts = src.partCols
+          ? uniq(parsed.rows.map(function (r) { return r.part; })).slice(0, 12)
+          : null;
+        rec.series = uniq(parsed.rows.map(function (r) { return r.load; }));
+      } catch (e) {
+        rec.error = e.message + (e.hint ? "  [" + e.hint + "]" : "");
+      }
+      out.push(rec);
+    }
+    return out;
+  }
+
+  /** One item of the right kind to probe with, or null. */
+  function candidateFor(sid, src, input) {
+    var El = mod("elements.js", "CfElements");
+    var table = { elem: input.elems, node: input.nodes,
+                  link: input.links, elink: input.elinks }[src.namespace];
+    if (!table) return null;
+    var ids = Object.keys(table);
+    if (src.namespace !== "elem") return ids.length ? Number(ids[0]) : null;
+    /* An element source needs an element of the right TYPE, or the call answers
+       "second query is wrong" and says nothing about the table. */
+    for (var i = 0; i < ids.length; i++) {
+      var route = El.ELEM_ROUTING[String(table[ids[i]].TYPE || "").toUpperCase()];
+      if (route && route.source === sid) return Number(ids[i]);
+    }
+    return null;
+  }
+
   /**
    * Every requested series must be accounted for in the reply. An
    * unaddressable series is dropped SILENTLY at HTTP 200 with no error, so a
@@ -777,7 +871,7 @@
     validateInputs: validateInputs, blockError: blockError,
     partitionSelection: partitionSelection, sensesFor: sensesFor,
     subtreeSeries: subtreeSeries, auditTimeHistory: auditTimeHistory,
-    noGoverningRow: noGoverningRow,
+    noGoverningRow: noGoverningRow, probeSources: probeSources,
     runAnalysis: runAnalysis, stageTokenFor: stageTokenFor
   };
   if (typeof module === "object" && module.exports) module.exports = api;

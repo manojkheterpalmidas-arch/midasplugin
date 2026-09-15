@@ -1,0 +1,15 @@
+{
+  "short_name": "BeamToPlate",
+  "name": "Beam to Plate",
+  "version": "1.0.0",
+  "description": "Convert beam elements into a plate mesh of their cross-section walls, with the wall model checked against the section area the model publishes.",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#eef0f4",
+  "width": 1280,
+  "height": 760
+}

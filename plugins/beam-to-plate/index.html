@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Convert MIDAS CIVIL NX beam elements into plate meshes of their cross-section walls">
+  <title>Beam to Plate</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main class="shell">
+
+  <!-- The drag surface is a SIBLING of the controls, never their ancestor: a
+       press on the close button can then never start a window drag, whatever
+       e.target resolves to inside the button. See references/host.md. -->
+  <header class="app-head">
+    <div id="drag-surface" class="brand" title="Drag this bar to move the plugin window">
+      <img src="./icon.svg" alt="" class="brand-icon">
+      <div>
+        <h1>Beam to Plate</h1>
+        <p>MIDAS CIVIL NX &middot; v1.0.0</p>
+      </div>
+    </div>
+    <div class="head-actions">
+      <!-- The claim, worded exactly, and backed by the whitelists in js/mapi.js:
+           ALLOWED_PUT is NODE/ELEM/THIK/GRUP, ALLOWED_DELETE_ROW is ELEM, and
+           the only POST permitted is /view/CAPTURE. -->
+      <span class="claim writes" title="Reads /db/NODE, ELEM, SECT, MATL, THIK, GRUP. Writes /db/NODE, ELEM, THIK and GRUP, and deletes single /db/ELEM rows only when you ask it to. Nothing is written until you press Write.">
+        &#9998; Writes NODE &middot; ELEM &middot; THIK &middot; GRUP
+      </span>
+      <span id="conn-badge" class="badge neutral">Not connected</span>
+      <button id="btn-theme" class="btn ghost" type="button">Dark</button>
+      <button id="btn-close" class="btn ghost" type="button" title="Close plugin">Close</button>
+    </div>
+  </header>
+
+  <section class="panel">
+    <div class="row">
+      <label for="in-base">Base URL</label>
+      <input id="in-base" type="text" readonly
+             title="Supplied by the host as ?redirectTo=. It always wins over a remembered value.">
+      <label for="in-key">MAPI key</label>
+      <input id="in-key" type="text" placeholder="paste a key when running outside CIVIL NX">
+      <button id="btn-connect" class="btn" type="button">Connect</button>
+    </div>
+  </section>
+
+  <!-- The run controls sit in their own panel that no option can hide. -->
+  <section class="panel run">
+    <div class="run-bar">
+      <span class="run-lead">
+        Replace beam elements with a plate mesh of their cross-section walls.
+        Nothing is written until you press <strong>Write to model</strong>.
+      </span>
+      <button id="btn-plan" class="btn primary" type="button" disabled>Read model &amp; plan</button>
+      <button id="btn-commit" class="btn danger" type="button" disabled>Write to model</button>
+    </div>
+    <div id="progress" hidden>
+      <p id="progress-line" class="progress-line">Idle</p>
+      <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+    </div>
+  </section>
+
+  <section id="error" class="panel error" hidden>
+    <p id="error-message" class="error-message"></p>
+    <p id="error-hint" class="error-hint" hidden></p>
+  </section>
+
+  <div class="cols">
+
+    <!-- ------------------------------------------------------------ left -->
+    <div class="col-left">
+
+      <section class="panel">
+        <h2>Which beams</h2>
+        <div class="opt">
+          <label><input type="radio" name="sel-mode" value="all" checked> Every beam element</label>
+          <label><input type="radio" name="sel-mode" value="sect"> By section</label>
+          <label><input type="radio" name="sel-mode" value="ids"> By element id</label>
+        </div>
+        <select id="sel-sects" multiple size="4" disabled></select>
+        <input id="sel-ids" type="text" placeholder="101-118, 205, 300" disabled>
+        <p id="sel-note" class="hint">Connect and plan to see what the model holds.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Mesh</h2>
+        <div class="grid-2">
+          <label for="opt-long">Along the member</label>
+          <input id="opt-long" type="number" step="0.05" min="0" value="0.5">
+          <label for="opt-trans">Across each wall</label>
+          <input id="opt-trans" type="number" step="0.05" min="0" value="0.25">
+          <label for="opt-facets">Pipe facets</label>
+          <input id="opt-facets" type="number" step="1" min="8" max="64" value="16">
+          <label for="opt-tol">Merge tolerance</label>
+          <input id="opt-tol" type="number" step="0.0001" min="0.000001" value="0.0001">
+          <label for="opt-origin">Node line at</label>
+          <select id="opt-origin">
+            <option value="bbox" selected>Centre of the section (Center-Center)</option>
+            <option value="centroid">Section centroid</option>
+          </select>
+        </div>
+        <p class="hint">
+          Target sizes are in the model&rsquo;s own length unit, the same one
+          <code>/db/NODE</code> reports coordinates in. A size of 0 means one
+          division.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>Write</h2>
+        <div class="grid-2">
+          <label for="opt-group">Structure group</label>
+          <input id="opt-group" type="text" value="B2P mesh" maxlength="16">
+        </div>
+        <label class="check"><input id="opt-reuse" type="checkbox" checked>
+          Reuse existing nodes within the merge tolerance</label>
+        <label class="check danger-check"><input id="opt-delete" type="checkbox">
+          Delete the source beams after the plates land</label>
+        <p class="hint" id="delete-warning">
+          Deleting a beam does <strong>not</strong> move the loads, supports or
+          releases that reference it, and the plate mesh is not connected to the
+          rest of the frame &mdash; joining them needs rigid links, which this
+          plugin does not write. Leave the beams in place unless you have dealt
+          with both.
+        </p>
+      </section>
+
+    </div>
+
+    <!-- ----------------------------------------------------------- right -->
+    <div class="col-right">
+
+      <section id="sections-panel" class="panel" hidden>
+        <h2>Sections in the selection</h2>
+        <p class="hint">
+          Each wall model is checked against the area the model publishes for the
+          section. <strong>Only the solid-rectangle pair (H, B) has been verified
+          against a live model</strong> &mdash; every other dimension order below
+          is read off the section dialog and is why the check exists. Correct any
+          value and the check reruns.
+        </p>
+        <div class="table-wrap">
+          <table class="grid" id="sect-table">
+            <thead>
+              <tr><th>Section</th><th>Shape</th><th>Dimensions</th>
+                  <th class="num">Wall area</th><th>Area check</th><th>Drawing</th></tr>
+            </thead>
+            <tbody id="sect-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="plan-panel" class="panel" hidden>
+        <h2>The plan</h2>
+        <div id="plan-stats" class="stats"></div>
+        <div id="mesh-preview" class="preview"></div>
+        <div class="table-wrap">
+          <table class="grid" id="problem-table" hidden>
+            <thead><tr><th>Not converted</th><th class="num">Count</th><th>Elements</th></tr></thead>
+            <tbody id="problem-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="report-panel" class="panel" hidden>
+        <h2>Written</h2>
+        <div id="report-stats" class="stats"></div>
+        <ul id="report-warnings" class="warn-list"></ul>
+        <div class="run-bar">
+          <span class="run-lead">Capture the CIVIL NX viewport to prove the geometry landed.</span>
+          <button id="btn-capture" class="btn" type="button">Capture model view</button>
+        </div>
+        <div id="capture-wrap" class="preview" hidden></div>
+      </section>
+
+    </div>
+  </div>
+
+</main>
+
+<script src="./js/theme.js"></script>
+<script src="./js/mapi.js"></script>
+<script src="./js/section.js"></script>
+<script src="./js/mesh.js"></script>
+<script src="./js/plan.js"></script>
+<script src="./js/commit.js"></script>
+<script src="./js/draw.js"></script>
+<script src="./js/app.js"></script>
+</body>
+</html>

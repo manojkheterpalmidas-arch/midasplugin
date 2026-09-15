@@ -1,0 +1,308 @@
+/* ==========================================================================
+   MIDAS CIVIL NX plugin template — styles
+   --------------------------------------------------------------------------
+   One palette defined as custom properties, swapped on [data-theme]. No CDN
+   fonts: a plugin behind a corporate proxy must still render.
+   ========================================================================== */
+
+:root {
+  --bg:        #eef0f4;
+  --panel:     #ffffff;
+  --ink:       #1c2330;
+  --ink-soft:  #5a6577;
+  --line:      #d7dce5;
+  --accent:    #2f6bed;
+  --accent-ink:#ffffff;
+  --ok:        #17794a;
+  --ok-bg:     #e3f5eb;
+  --warn:      #8a5b00;
+  --warn-bg:   #fbf0d9;
+  --bad:       #a3232a;
+  --bad-bg:    #fbe6e7;
+  --radius:    8px;
+}
+
+[data-theme="dark"] {
+  --bg:        #171a20;
+  --panel:     #1f242c;
+  --ink:       #e7ebf2;
+  --ink-soft:  #9aa5b6;
+  --line:      #333b47;
+  --accent:    #5b8dff;
+  --accent-ink:#0d1017;
+  --ok:        #6cd39c;
+  --ok-bg:     #16302410;
+  --warn:      #e0b45c;
+  --warn-bg:   #2e260f;
+  --bad:       #ff8a90;
+  --bad-bg:    #33191b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  min-height: 100%;
+}
+
+/* ------------------------------------------------------------------ header */
+
+.app-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  /* The bar is a drag handle; a text cursor over it invites selection instead. */
+  cursor: move;
+  user-select: none;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-icon { width: 28px; height: 28px; }
+.brand h1 { margin: 0; font-size: 15px; font-weight: 650; }
+.brand p  { margin: 0; font-size: 12px; color: var(--ink-soft); }
+
+.head-actions { display: flex; align-items: center; gap: 8px; }
+
+.claim {
+  font-size: 12px;
+  color: var(--ok);
+  background: var(--ok-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ badges */
+
+.badge {
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.badge.neutral { color: var(--ink-soft); }
+.badge.ok      { color: var(--ok);   background: var(--ok-bg); }
+.badge.warn    { color: var(--warn); background: var(--warn-bg); }
+.badge.bad     { color: var(--bad);  background: var(--bad-bg); }
+
+/* ------------------------------------------------------------------ panels */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.panel h2 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.row label { font-size: 12px; color: var(--ink-soft); }
+.row input {
+  flex: 1 1 200px;
+  min-width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.hint { margin: 8px 0 0; font-size: 12px; color: var(--ink-soft); }
+
+.run-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.run-lead { font-size: 13px; color: var(--ink-soft); }
+
+/* ----------------------------------------------------------------- buttons */
+
+.btn {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.ghost   { background: transparent; }
+
+/* ---------------------------------------------------------------- progress */
+
+.progress-line { margin: 10px 0 6px; font-size: 12px; color: var(--ink-soft); }
+.progress-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width .15s linear;
+}
+
+/* ------------------------------------------------------------------ errors */
+
+.panel.error { border-color: var(--bad); background: var(--bad-bg); }
+.error-message { margin: 0; color: var(--bad); font-weight: 600; }
+.error-hint    { margin: 6px 0 0; font-size: 13px; color: var(--ink); }
+
+/* ------------------------------------------------------------------ tables */
+
+/* Sideways scroll belongs on the wrapper so the header travels with the rows. */
+.table-wrap { overflow-x: auto; }
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.grid th, .grid td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  /* Never a bare 1fr in a grid layout, and never a fixed width here: text
+     columns collapse to ~20px and headers render as "N." and "S1". */
+  min-width: 80px;
+}
+.grid th {
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-weight: 600;
+  /* Deliberately NOT uppercased: a CSS-uppercased "ν" renders as a Greek
+     capital that reads as a Latin N. Spell symbols out instead. */
+}
+.grid td.num { text-align: right; }
+.grid td.note { color: var(--ink-soft); font-size: 13px; }
+
+/* The drag surface must FILL the header's height. A header that centres its
+   children leaves it short, and the strips above and below it then drag
+   nothing - which reads as an intermittently broken title bar. */
+#drag-surface{
+  flex: 1 1 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+  user-select: none;
+}
+
+/* ==========================================================================
+   Beam to Plate — additions
+   ========================================================================== */
+
+:root { --wall-fill: #c9d6f5; }
+[data-theme="dark"] { --wall-fill: #2c3f6b; }
+
+/* The shell scrolls as one column; the two content columns do not scroll
+   independently, so the run controls never leave the top of the window. */
+body { overflow-y: auto; }
+
+.cols {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.col-left, .col-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+/* Below the plugin's own window width there is no room for two columns; the
+   host can be resized smaller than the manifest asks for. */
+@media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+
+.claim.writes { color: var(--warn); background: var(--warn-bg); }
+
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.danger:hover:not(:disabled) { background: var(--bad-bg); border-color: var(--bad); }
+
+/* The run controls follow the page down, so Write is reachable from anywhere in
+   a long section table. They are in their own panel, which no option can hide. */
+.panel.run { position: sticky; top: 0; z-index: 2; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
+
+.opt { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.opt label { display: flex; align-items: center; gap: 6px; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 13px;
+}
+.grid-2 label { color: var(--ink-soft); font-size: 12px; }
+
+input[type="text"], input[type="number"], select {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  min-width: 0;
+}
+select[multiple] { width: 100%; margin-top: 6px; }
+#sel-ids { width: 100%; margin-top: 6px; }
+
+.check { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; margin-top: 8px; }
+.danger-check { color: var(--bad); }
+
+.stats { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; }
+.stat { display: flex; flex-direction: column; }
+.stat b { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; color: var(--ink-soft); }
+
+.preview {
+  margin-top: 10px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow-x: auto;
+}
+.preview img { max-width: 100%; display: block; }
+
+.warn-list { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--warn); }
+
+/* The per-section dimension editor: compact enough that a girder's six
+   dimensions fit the row, so the engineer can correct one in place. */
+.dims { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.dim { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--ink-soft); }
+.dim input { width: 74px; padding: 3px 5px; font-size: 12px; }
+.sect-svg { line-height: 0; }
+.gate-note { font-size: 11px; color: var(--ink-soft); display: block; margin-top: 3px; }
+.reason { font-size: 12px; color: var(--warn); max-width: 340px; display: block; }

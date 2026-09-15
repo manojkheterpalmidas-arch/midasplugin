@@ -28,6 +28,27 @@ references/
 assets/
   template/                   a working plugin: client, mock server, 26-assertion test suite
   scripts/                    pack.ps1 and verify-zip.ps1
+plugins/
+  beam-to-plate/              a complete plugin built from the skill: converts beam
+                              elements into plate meshes of their section walls
+```
+
+## A worked example
+
+`plugins/beam-to-plate/` is a finished plugin, not a snippet — the shell, the
+write path, an offline mock with ten sections and a 134-assertion suite. It is
+the best single answer to "what does a plugin built this way look like", and it
+shows the rule the references keep repeating: **every reconstruction is gated
+against a published quantity**. Only one section dimension order in this whole
+API has been measured (`DBUSER` `DATATYPE: 2` is (H, B)), so the plugin checks
+every wall model it builds against the area the model publishes for that
+section, refuses the ones that miss, and lets the engineer correct the
+dimensions in place.
+
+```bash
+cd plugins/beam-to-plate
+node mock-midas/server.js     # then open the URL it prints
+node test/run.js              # 134 assertions, no CIVIL NX needed
 ```
 
 ## Install
@@ -111,6 +132,8 @@ is marked **unverified**, and should stay marked.
 Not affiliated with or endorsed by MIDAS IT
 
 Plugins Made till now - 
+
+Beam to Plate ---------- source in this repo at `plugins/beam-to-plate/` ----------
 
 Construction Stage Reporter---------- Marketplace version 1.0.0 ----------
 Construction_Stage_Wizard--------- Marketplace version 1.0.0 ----------

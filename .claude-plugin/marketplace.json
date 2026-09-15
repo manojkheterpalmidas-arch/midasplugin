@@ -12,8 +12,8 @@
       "name": "midasplugin",
       "displayName": "MIDAS CIVIL NX Plugin Builder",
       "source": "./",
-      "description": "Build, test and package plugins for MIDAS CIVIL NX: the MAPI client, the plugin-host contract, verified request and response shapes for /db/ and /post/TABLE, construction-stage results, an offline mock so a plugin can be built with CIVIL NX closed, and the zip rules the host actually accepts.",
-      "version": "1.1.0",
+      "description": "Build, test and package plugins for MIDAS CIVIL NX: the MAPI client, the plugin-host contract, verified request and response shapes for /db/ and /post/TABLE, construction-stage results, an offline mock so a plugin can be built with CIVIL NX closed, a real shipped plugin included as a worked example zip, and the zip rules the host actually accepts.",
+      "version": "1.2.0",
       "author": {
         "name": "Manoj Kheterpal",
         "url": "https://github.com/manojkheterpalmidas-arch"

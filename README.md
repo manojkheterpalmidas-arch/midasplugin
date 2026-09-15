@@ -25,10 +25,37 @@ references/
   testing.md                  the mock + Node harness pattern
   probing.md                  settling an unknown API shape by writing to a scratch model
   pitfalls.md                 the pre-flight checklist
+  example-plugin.md           the worked example, annotated: what a finished zip contains
 assets/
   template/                   a working plugin: client, mock server, 26-assertion test suite
   scripts/                    pack.ps1 and verify-zip.ps1
+examples/                     a real shipped plugin, as the zip that was released
 ```
+
+## The worked example
+
+`examples/` holds **Concurrent Force Reporter v1.0.0** — a plugin that actually
+shipped — as the exact zip that was released. It is there so that "what am I
+handing over at the end?" has an answer you can unzip and look at, rather than a
+description you have to trust.
+
+`assets/template/` is where a plugin *starts*. The example is what one *ends up
+as*: 20 plain-text files at the zip root, nothing compiled or minified, no
+`node_modules`, no test suite, no mock server, and no external requests. The
+template's `package.json`, `test/` and `mock-midas/` are how a plugin gets built
+and are deliberately absent from the archive the host opens.
+
+```bash
+unzip -l examples/MIDAS_CIVIL_NX_Concurrent_Force_Reporter_v1.0.0.zip
+```
+
+`references/example-plugin.md` walks through it: the manifest and the window-size
+trap Windows display scaling causes, why the read/write claim sits in the header,
+why the logic lives in DOM-free modules, why `VALIDATION.md` ships inside the zip
+and has to say what was *not* checked — and a ship checklist to run your own
+archive against.
+
+Ask Claude to "compare my plugin zip against the example" and it will.
 
 ## Install
 

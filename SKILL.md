@@ -1,6 +1,6 @@
 ---
 name: midasplugin
-description: Build, test and package plugins for MIDAS CIVIL NX — the MAPI client, the plugin-host contract, verified request and response shapes for /db/, /post/TABLE and /view/CAPTURE, construction-stage results and the OPT_CS family split, an offline mock so the plugin can be developed without CIVIL NX open, and the zip rules the host actually accepts. Use when creating or modifying a CIVIL NX plugin, calling the MIDAS MAPI, reading construction-stage or load-combination results, debugging a plugin that reports success but changes nothing in the model, or packaging a plugin for release.
+description: Build, test and package plugins for MIDAS CIVIL NX — the MAPI client, the plugin-host contract, verified request and response shapes for /db/, /post/TABLE and /view/CAPTURE, construction-stage results and the OPT_CS family split, an offline mock so the plugin can be developed without CIVIL NX open, a real shipped plugin included as a worked example zip, and the zip rules the host actually accepts. Use when creating or modifying a CIVIL NX plugin, calling the MIDAS MAPI, reading construction-stage or load-combination results, debugging a plugin that reports success but changes nothing in the model, checking what a finished plugin zip should contain, or packaging a plugin for release.
 ---
 
 # MIDAS CIVIL NX plugin builder
@@ -14,6 +14,12 @@ window messages.
 That simplicity is the whole opportunity: a folder of plain HTML, CSS and JS,
 zipped, is a shippable plugin. Everything hard about this work is in the API's
 undocumented behaviour, and that is what the references here carry.
+
+**Two things in this skill bracket the job.** `assets/template/` is where a
+plugin starts — a working shell to copy. `examples/` holds a **real shipped
+plugin as a zip**, so what a finished deliverable actually looks like is not left
+to description. If you are unsure what to hand over at the end, unzip the example
+and look; `references/example-plugin.md` walks through it.
 
 ## Read this first: the rules that cause the most lost time
 
@@ -131,6 +137,21 @@ entry by entry through .NET with the separators set explicitly, then
 Files go at the **zip root** — `index.html` must be the top-level entry, not
 inside a folder.
 
+**Compare against the worked example before you ship.**
+`examples/MIDAS_CIVIL_NX_Concurrent_Force_Reporter_v1.0.0.zip` is a real
+released plugin — 20 plain-text files, nothing compiled, no `node_modules`, no
+test suite, no mock server, no external requests. Unzip it beside your own
+archive and check the two look alike:
+
+```bash
+unzip -l examples/MIDAS_CIVIL_NX_Concurrent_Force_Reporter_v1.0.0.zip
+unzip -l your-plugin.zip | grep '\\' && echo "BACKSLASHES — the host may refuse this"
+```
+
+`references/example-plugin.md` is the annotated walk-through: the manifest, the
+window-size trap that Windows display scaling causes, what belongs in the archive
+and what stays behind in the source folder, and a ship checklist.
+
 ## References
 
 Load these as needed; do not read them all up front.
@@ -145,9 +166,11 @@ Load these as needed; do not read them all up front.
 | `references/testing.md` | The mock + Node harness pattern, and how to verify offline |
 | `references/probing.md` | How to settle an unknown API shape by writing to a scratch model |
 | `references/pitfalls.md` | The consolidated checklist — read before shipping |
+| `references/example-plugin.md` | The worked example: what a finished plugin zip contains, annotated, with a ship checklist |
 
-`assets/icon-frame.png` is the house icon frame, already embedded in the
-template's `icon.svg`. `references/images/` holds the diagrams the references
+`examples/` holds the example plugin itself, as the zip that was actually
+released. `assets/icon-frame.png` is the house icon frame, already embedded in
+the template's `icon.svg`. `references/images/` holds the diagrams the references
 link to.
 
 ## Provenance

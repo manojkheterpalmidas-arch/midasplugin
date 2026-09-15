@@ -112,27 +112,36 @@ Not affiliated with or endorsed by MIDAS IT
 
 Plugins Made till now - 
 
-CS454 Auto Lane Generator  ----------  Marketplace version 1.0.4 https://support.midasuser.com/hc/ko/articles/61259225090329
+Construction Stage Reporter---------- Marketplace version 1.0.0 ----------
+Construction_Stage_Wizard--------- Marketplace version 1.0.0 ----------
+ 
+Existing
+Concurrent Force Reporter---------- Marketplace version 1.0.0 ----------  https://support.midasuser.com/hc/en-us/articles/62123537156889-Concurrent-Force-Reporter
 
-CS 454 Load Assessment Combinations  ----------    Marketplace version 1.0.2 https://support.midasuser.com/hc/en-us/articles/60997850893209
+RC Slab and Shell Assessment ---------- Marketplace version 1.0.1 ---------- https://support.midasuser.com/hc/en-us/articles/61971621469849
 
-CS 454 Moving load generator  ---------- Marketplace version 1.0.3 https://support.midasuser.com/hc/en-us/articles/60998764028185
+Eurocode Load Combinations Plugin ---------- Marketplace version 2.0.2 ---------- https://support.midasuser.com/hc/ko/articles/61259382041369
 
-Eurocode Auto Lane Generator  ----------  Marketplace version 1.0.2 https://support.midasuser.com/hc/ko/articles/61259174909849
+Load Combination Contribution Analyzer ---------- Marketplace version 1.0.3 ---------- https://support.midasuser.com/hc/ko/articles/61258768334233
 
-Eurocode Load Combinations Plugin  ----------  Marketplace version 2.0.1   https://support.midasuser.com/hc/ko/articles/61259382041369
+Model Report Builder ---------- Marketplace version 1.0.1 ---------- https://support.midasuser.com/hc/en-us/articles/61655350763289-Model-Report-Builder
 
-Eurocode Moving Load Case Generator  ----------  Marketplace version 1.0.1 https://support.midasuser.com/hc/ko/articles/61259043302041
+CS454 Auto Lane Generator ---------- Marketplace version 1.0.4 ---------- https://support.midasuser.com/hc/ko/articles/61259225090329
 
-Skew Grillage Geometry   ----------   Marketplace version 1.0.4   https://support.midasuser.com/hc/en-us/articles/60848423734169
+CS 454 Load Assessment Combinations ---------- Marketplace version 1.0.2 ---------- https://support.midasuser.com/hc/en-us/articles/60997850893209
 
-Point to Patch Convertor   ----------  Marketplace version 1.0.1 Point to Patch Convertor
+CS 454 Moving Load Generator ---------- Marketplace version 1.0.3 ---------- https://support.midasuser.com/hc/en-us/articles/60998764028185
 
-Model Report Builder  ----------  Marketplace version 1.0.1  Model Report Builder 
+Eurocode Auto Lane Generator ---------- Marketplace version 1.0.2 ---------- https://support.midasuser.com/hc/ko/articles/61259174909849
 
-Load Combination Contribution Analyzer ----------   Marketplace version 1.0.2  https://support.midasuser.com/hc/ko/articles/61258768334233
+Eurocode Moving Load Case Generator ---------- Marketplace version 1.0.1 ---------- https://support.midasuser.com/hc/ko/articles/61259043302041
 
-Bulk Tabular Result Exporter  ----------    Marketplace version 1.0.1  https://support.midasuser.com/hc/en-us/articles/60848073556633
+Skew Grillage Geometry ---------- Marketplace version 1.0.4 ---------- https://support.midasuser.com/hc/en-us/articles/60848423734169
+
+Point to Patch Convertor ---------- Marketplace version 1.0.1 ---------- https://support.midasuser.com/hc/en-us/articles/61486703401753-Point-to-Patch-Convertor
+
+Bulk Tabular Result Exporter ---------- Marketplace version 1.0.1 ---------- https://support.midasuser.com/hc/en-us/articles/60848073556633
+ 
 
 ## Licence
 

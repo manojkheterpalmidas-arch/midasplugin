@@ -109,6 +109,11 @@
           <input id="opt-group" type="text" value="B2P mesh" maxlength="16">
           <label for="opt-bngr">Boundary group</label>
           <input id="opt-bngr" type="text" value="B2P links" maxlength="16">
+          <label for="opt-load-at">Put the beam loads</label>
+          <select id="opt-load-at">
+            <option value="centreline" selected>On the section centreline</option>
+            <option value="spread">Spread over the section</option>
+          </select>
         </div>
         <label class="check"><input id="opt-reuse" type="checkbox" checked>
           Reuse existing nodes within the merge tolerance</label>

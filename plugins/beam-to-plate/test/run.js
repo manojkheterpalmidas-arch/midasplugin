@@ -237,7 +237,7 @@ section("beam loads against reactions CIVIL NX reported");
       ECCEN_TYPE: 0, ECCEN_DIR: "LY", I_END: 0.1 }), [0, 0, 10, 1, -25, 0]],
     ["concentrated moment", "CC", item({ TYPE: "CONMOMENT", DIRECTION: "GY", D: [0.5, 0, 0, 0], P: [3, 0, 0, 0] }), [0, 0, 0, 0, -3, 0]]
   ];
-  cases.forEach(([name, pt, it, reac]) => {
+  ["centreline", "spread"].forEach(mode => cases.forEach(([name, pt, it, reac]) => {
     const row = JSON.parse(JSON.stringify(sbRow));
     row.SECT_BEFORE.OFFSET_PT = pt;
     const st = S.study("1", row, sbProp, {});
@@ -245,7 +245,7 @@ section("beam loads against reactions CIVIL NX reported");
     const mesh = M.meshElement(pool, { id: "1", i: [0, 0, 0], j: [5, 0, 0], angle: 0, matl: 1 }, st.ends,
       { longSize: 0.5, transSize: 0.1 });
     const pp = G.polyProps(st.ends.I.regions);
-    const res = LD.convertElement([it], mesh, pool, { centroid: [pp.cy, pp.cz], depth: 0.4, width: 0.1 });
+    const res = LD.convertElement([it], mesh, pool, { centroid: [pp.cy, pp.cz], depth: 0.4, width: 0.1, loadAt: mode });
     let F = [0, 0, 0], Mo = [0, 0, 0];
     res.loads.forEach(l => {
       const p = pool.list[l.idx];
@@ -254,8 +254,33 @@ section("beam loads against reactions CIVIL NX reported");
     });
     const got = F.concat(Mo).map(v => -v);
     const worst = Math.max(...got.map((v, k) => Math.abs(v - reac[k])));
-    ok(worst < 1e-9, name + ": the plates carry exactly the reaction CIVIL NX reported (worst " + worst.toExponential(1) + ")");
-  });
+    ok(worst < 1e-9, mode + ", " + name + ": the plates carry exactly the reaction CIVIL NX reported (worst " + worst.toExponential(1) + ")");
+  }));
+}
+
+section("centreline loads land on the centreline only");
+{
+  /* a symmetric I girder under a vertical UDL through its centroid: every loaded
+     node must be on the web plane, at the top flange — nothing on the webs,
+     nothing on the bottom flange, nothing at the flange tips */
+  const lib = mock.LIB;
+  const st = S.study("1", lib["1"].row, lib["1"].prop, {});
+  const pool = new M.NodePool(1e-7);
+  const mesh = M.meshElement(pool, { id: "1", i: [0, 0, 0], j: [8, 0, 0], angle: 0, matl: 1 }, st.ends,
+    { longSize: 1, transSize: 0.1 });
+  const pp = G.polyProps(st.ends.I.regions);
+  const it = { ID: 1, LCNAME: "Wet Concrete", GROUP_NAME: "", CMD: "BEAM", TYPE: "UNILOAD", DIRECTION: "GZ",
+               USE_PROJECTION: false, USE_ECCEN: false, D: [0, 1, 0, 0], P: [-20, -20, 0, 0] };
+  const res = LD.convertElement([it], mesh, pool, { centroid: [pp.cy, pp.cz], depth: 1, width: 0.4, loadAt: "centreline" });
+  const loaded = LD.combine(res.loads).filter(l => Math.hypot(...l.F) > 1e-9);
+  const zTop = Math.max(...pool.list.map(p => p[2]));
+  ok(loaded.length === mesh.stations.length, "one loaded node per station (" + loaded.length + " for " + mesh.stations.length + " stations)");
+  ok(loaded.every(l => Math.abs(pool.list[l.idx][1]) < 1e-9), "every loaded node is on the centreline (y = 0)");
+  ok(loaded.every(l => Math.abs(pool.list[l.idx][2] - pool.list[loaded[0].idx][2]) < 1e-9 && pool.list[l.idx][2] > 0),
+    "every loaded node is on the top flange");
+  near(loaded.reduce((a, l) => a + l.F[2], 0), -160, 1e-12, "and they carry the whole 20 kN/m x 8 m");
+  ok(loaded.every(l => l.lcname === "Wet Concrete"), "in the load case it came from");
+  void zTop;
 }
 
 section("load distribution");

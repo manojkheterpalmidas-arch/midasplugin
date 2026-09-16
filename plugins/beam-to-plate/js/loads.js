@@ -152,11 +152,13 @@
         if (kind === "force") {
           var v = scale(vec, w);
           st.F = add(st.F, v);
-          /* the force acts at the node line + eccentricity, but is moved to the
-             station: a moment for the offset in the section, and one for the
-             distance along the member to the station */
+          /* the force acts at the node line + eccentricity: moving it onto the
+             node line costs a moment for the offset in the section. Its position
+             ALONG the member needs no moment — splitting a force between the two
+             stations either side by the hat functions already keeps its moment
+             about every point — and adding one would put spurious axial couples
+             on the plate nodes. */
           var arm = add(scale(ey, ecc[0]), scale(ez, ecc[1]));
-          arm = add(arm, scale(ctx.axes.ex, (ratio - tg[0] / (n || 1)) * L));
           st.M = add(st.M, cross(arm, v));
         } else {
           st.M = add(st.M, scale(vec, w));
@@ -211,6 +213,51 @@
     var miss = sub(Mc, sumM);
     return { forces: forces, residualMoment: Math.hypot(miss[0], miss[1], miss[2]),
              moment: Math.hypot(Mc[0], Mc[1], Mc[2]) };
+  }
+
+  /**
+   * CENTRELINE distribution: the whole force goes to ONE node — the section's
+   * centreline node — and only what that node cannot carry (the moment of the
+   * force about it, plus any applied moment) is spread over the section as a
+   * pure couple, whose forces sum to zero. A vertical load acting through the
+   * centroid of a symmetric girder therefore lands on the centreline node and
+   * nowhere else.
+   */
+  function distributeAt(F, M, line, nodes, target) {
+    var Mc = add(M, cross(sub(line, target.p), F));
+    var forces = [{ idx: target.idx, F: F.slice() }];
+    var mag = Math.hypot(Mc[0], Mc[1], Mc[2]);
+    if (!(mag > 1e-12 * (1 + Math.hypot(F[0], F[1], F[2])))) {
+      return { forces: forces, residualMoment: 0, moment: 0 };
+    }
+    var couple = distribute([0, 0, 0], Mc, target.p, nodes);
+    couple.forces.forEach(function (f) {
+      if (Math.hypot(f.F[0], f.F[1], f.F[2]) > 0) forces.push(f);
+    });
+    return { forces: forces, residualMoment: couple.residualMoment, moment: mag };
+  }
+
+  /**
+   * The centreline node of a station: of the nodes on (or nearest) the vertical
+   * plane through the section's centroid, the TOPMOST — where a deck, a wearing
+   * surface or wet concrete actually bears on a girder.
+   */
+  function centrelineNode(station, pool, axes, centroidY) {
+    var best = null, rows = [];
+    station.nodes.forEach(function (n) {
+      var p = pool.list[n.idx], r = sub(p, station.line);
+      rows.push({ idx: n.idx, p: p, y: dot(r, axes.ey), z: dot(r, axes.ez) });
+    });
+    if (!rows.length) return null;
+    var minDy = Infinity;
+    rows.forEach(function (q) { minDy = Math.min(minDy, Math.abs(q.y - centroidY)); });
+    var span = 0;
+    rows.forEach(function (q) { span = Math.max(span, Math.abs(q.y - centroidY), Math.abs(q.z)); });
+    var tol = minDy + 1e-6 * (1 + span);
+    rows.forEach(function (q) {
+      if (Math.abs(q.y - centroidY) <= tol && (!best || q.z > best.z)) best = q;
+    });
+    return best;
   }
 
   /** Solve K x = b for symmetric 3x3 K, dropping directions with no stiffness. */
@@ -277,7 +324,10 @@
         if (!(Math.hypot(st.F[0], st.F[1], st.F[2]) > 0 || Math.hypot(st.M[0], st.M[1], st.M[2]) > 0)) return;
         var station = mesh.stations[k];
         var nodes = station.nodes.map(function (n) { return { idx: n.idx, w: n.w, p: pool.list[n.idx] }; });
-        var dres = distribute(st.F, st.M, station.line, nodes);
+        var target = ctx.loadAt === "spread" ? null :
+          centrelineNode(station, pool, mesh.axes, (ctx.centroid || [0, 0])[0]);
+        var dres = target ? distributeAt(st.F, st.M, station.line, nodes, target)
+                          : distribute(st.F, st.M, station.line, nodes);
         /* Measure what is left over against the SIZE OF THE LOAD, not against
            the moment at this particular station: the end stations carry almost
            no moment, so a ratio against their own moment reads as a huge miss
@@ -305,7 +355,8 @@
     return out;
   }
 
-  var api = { interpret: interpret, lump: lump, distribute: distribute, convertElement: convertElement,
+  var api = { interpret: interpret, lump: lump, distribute: distribute, distributeAt: distributeAt,
+              centrelineNode: centrelineNode, convertElement: convertElement,
               combine: combine, dir: dir };
   if (typeof module === "object" && module.exports) module.exports = api;
   root.B2PLoads = api;

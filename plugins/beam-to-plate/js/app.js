@@ -199,6 +199,7 @@
       minLong: 1, minTrans: 1,
       overrides: S.overrides,
       convertLoads: $("opt-loads").checked,
+      loadAt: $("opt-load-at").value,
       linkAll: $("opt-link-all").checked,
       boundaryGroup: $("opt-bngr").value.trim(),
       materialFor: function (part, study) { return (S.materials[study.id] || {})[part]; }
@@ -618,7 +619,7 @@
     $("btn-refresh-sel").addEventListener("click", function (e) { e.preventDefault(); refreshSelection(); });
 
     ["opt-long", "opt-trans", "opt-facets", "opt-tol", "opt-thick-tol", "opt-calibrate",
-     "opt-loads", "opt-link-all", "sel-ids", "sel-sects", "sel-groups"].forEach(function (id) {
+     "opt-loads", "opt-load-at", "opt-link-all", "sel-ids", "sel-sects", "sel-groups"].forEach(function (id) {
       $(id).addEventListener("change", rebuild);
     });
     Array.prototype.forEach.call(document.querySelectorAll('input[name="sel-mode"]'), function (r) {

@@ -229,7 +229,8 @@
         var ctx = {
           centroid: centroidOf(st.ends.I),
           depth: extent ? extent.bbox.max[1] - extent.bbox.min[1] : 0,
-          width: extent ? extent.bbox.max[0] - extent.bbox.min[0] : 0
+          width: extent ? extent.bbox.max[0] - extent.bbox.min[0] : 0,
+          loadAt: opts.loadAt || "centreline"
         };
         var conv = Loads.convertElement(bmld[b.id].ITEMS, mesh, pool, ctx);
         conv.loads.forEach(function (l) { loadList.push(l); });

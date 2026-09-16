@@ -46,7 +46,7 @@
 
   function Mapi(opts) {
     opts = opts || {};
-    this.base = (opts.base || DEFAULT_BASE).replace(/\/+$/, "");
+    this.base = normaliseBase(opts.base || DEFAULT_BASE);
     this.key = opts.key || "";
     this.unit = opts.unit || { FORCE: "kN", DIST: "m" };
     this.calls = 0;
@@ -345,8 +345,17 @@
     var redirect = new URLSearchParams(search || "").get("redirectTo");
     /* A base remembered in localStorage must NEVER override the host's own
        redirectTo — the plugin would then talk to the wrong instance. */
-    if (redirect) return redirect.replace(/\/+$/, "");
-    return DEFAULT_BASE;
+    return normaliseBase(redirect || DEFAULT_BASE);
+  }
+
+  /* THE HOST'S redirectTo HAS NO /civil SEGMENT. It arrives as
+     https://moa-engineers.midasit.com:443, where <root>/db/ELEM is a 404 and
+     <root>/civil/db/ELEM has the rows. /mapikey/verify answers either way, so a
+     plugin using redirectTo verbatim shows "Connected" and then fails every
+     table read. Strip any program segment and put /civil back. */
+  function normaliseBase(url) {
+    var root = String(url || "").replace(/\/+$/, "").replace(/\/(civil|gen)$/i, "");
+    return root + "/civil";
   }
 
   function keyFromLocation(search) {
@@ -362,6 +371,7 @@
     ALLOWED_PUT: ALLOWED_PUT,
     ALLOWED_DELETE_ROW: ALLOWED_DELETE_ROW,
     baseFromLocation: baseFromLocation,
+    normaliseBase: normaliseBase,
     keyFromLocation: keyFromLocation
   };
 

@@ -94,11 +94,9 @@
   }
 
   async function connect() {
-    var key = Mapi.keyFromLocation(location.search) || $("in-key").value.trim();
+    var key = Mapi.keyFromLocation(location.search);
     var base = Mapi.baseFromLocation(location.search);
-    $("in-key").value = key;
-    $("in-base").value = base;
-    if (!key) { setStatus("warn", "No MAPI key"); return; }
+    if (!key) { setStatus("warn", "No MAPI key — open from CIVIL NX"); return; }
     setStatus("neutral", "Connecting…");
     S.mapi = new Mapi.Mapi({ key: key, base: base });
     try {
@@ -138,7 +136,7 @@
     progress("Reading the model", 0.05);
     try {
       S.tables = await Plan.readTables(S.mapi, function (done, total, key) {
-        progress("Reading /db/" + key + " (" + done + " of " + total + ")", done / total * 0.85);
+        progress("Reading " + (key === "SECTPROP" ? "/ope/" : "/db/") + key + " (" + done + " of " + total + ")", done / total * 0.85);
       });
       await yieldToUi();
       if (S.tables.ELEM.status === "absent" || S.tables.NODE.status === "absent") {
@@ -613,7 +611,6 @@
 
   function init() {
     wireHost();
-    $("btn-connect").addEventListener("click", connect);
     $("btn-plan").addEventListener("click", readAndPlan);
     $("btn-commit").addEventListener("click", commit);
     $("btn-undo").addEventListener("click", undo);
@@ -633,9 +630,7 @@
       });
     });
 
-    $("in-base").value = Mapi.baseFromLocation(location.search);
-    $("in-key").value = Mapi.keyFromLocation(location.search);
-    if (Mapi.keyFromLocation(location.search)) connect();
+    connect();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

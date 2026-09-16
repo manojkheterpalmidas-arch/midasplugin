@@ -30,25 +30,32 @@ assets/
   scripts/                    pack.ps1 and verify-zip.ps1
 plugins/
   beam-to-plate/              a complete plugin built from the skill: converts beam
-                              elements into plate meshes of their section walls
+                              elements into a plate mesh of their cross-section,
+                              carrying loads, links and groups across
 ```
 
 ## A worked example
 
 `plugins/beam-to-plate/` is a finished plugin, not a snippet — the shell, the
-write path, an offline mock with ten sections and a 134-assertion suite. It is
-the best single answer to "what does a plugin built this way look like", and it
+write path, an offline mock whose 26 sections are REAL ones carrying the
+properties CIVIL NX computed for them, and a 171-assertion suite. It is the
+best single answer to "what does a plugin built this way look like", and it
 shows the rule the references keep repeating: **every reconstruction is gated
-against a published quantity**. Only one section dimension order in this whole
-API has been measured (`DBUSER` `DATATYPE: 2` is (H, B)), so the plugin checks
-every wall model it builds against the area the model publishes for that
-section, refuses the ones that miss, and lets the engineer correct the
-dimensions in place.
+against a published quantity**.
+
+It also shows what that rule buys. The plugin converts any section CIVIL NX
+gives geometry for, and checks each one twice against `/ope/SECTPROP`: does the
+outline it read reproduce the published properties — if not, the dimensions were
+read wrongly — and how far is the plate model from the section, where a few
+percent is idealisation rather than error. Whole models have been converted and
+re-analysed against the beams they replaced: total reactions matched exactly,
+and the deflections differed by a few percent, the difference being real plate
+behaviour (shear lag in a wide box girder) rather than error.
 
 ```bash
 cd plugins/beam-to-plate
 node mock-midas/server.js     # then open the URL it prints
-node test/run.js              # 134 assertions, no CIVIL NX needed
+node test/run.js              # 171 assertions, no CIVIL NX needed
 ```
 
 ## Install
@@ -133,7 +140,7 @@ Not affiliated with or endorsed by MIDAS IT
 
 Plugins Made till now - 
 
-Beam to Plate ---------- source in this repo at `plugins/beam-to-plate/` ----------
+Beam to Plate ---------- v2.0.0, source in this repo at `plugins/beam-to-plate/` ----------
 
 Construction Stage Reporter---------- Marketplace version 1.0.0 ----------
 Construction_Stage_Wizard--------- Marketplace version 1.0.0 ----------

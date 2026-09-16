@@ -27,12 +27,22 @@
      the user can prove the geometry landed. */
   var ALLOWED_POST = ["/view/CAPTURE"];
 
+  /* GET paths outside /db/: the computed section properties every rebuilt
+     section is checked against, and the user's current selection in CIVIL NX. */
+  var ALLOWED_GET = ["/ope/SECTPROP", "/view/SELECT"];
+
   /* This plugin WRITES, so the whitelist idea is extended to the writing verbs.
      A conversion touches exactly four tables and deletes at most single ELEM
      rows; anything else is a bug, and a bug that reaches PUT is a bug in the
      user's model. Both lists are asserted in the offline suite. */
-  var ALLOWED_PUT = ["NODE", "ELEM", "THIK", "GRUP"];
-  var ALLOWED_DELETE_ROW = ["ELEM"];
+  var ALLOWED_PUT = ["NODE", "ELEM", "THIK", "GRUP", "RIGD", "CNLD", "BNGR", "ETMP",
+                     /* BMLD, FRLS and OFFS are here for ONE reason: Undo puts back
+                        rows this plugin itself saved before deleting their beam. */
+                     "BMLD", "FRLS", "OFFS"];
+  /* Single rows only, of what a conversion creates or takes back. There is no
+     whole-table delete anywhere in this client: DELETE /db/SECT would empty a
+     user's whole section library, and one mistyped call must not be able to. */
+  var ALLOWED_DELETE_ROW = ["ELEM", "NODE", "RIGD", "CNLD"];
 
   function Mapi(opts) {
     opts = opts || {};
@@ -164,6 +174,84 @@
     return body;
   };
 
+  /**
+   * DELETE many rows in one call: /db/<TABLE>/1,2,3 — measured live, a
+   * comma-separated list removes every id on it, which turns a mesh's worth of
+   * single-row deletes into a handful of calls.
+   *
+   * THE ID LIST IS VALIDATED, EVERY TIME. `DELETE /db/<TABLE>` with no ids
+   * empties the whole table — and it does so even when a body lists the rows to
+   * remove, because the body is ignored (measured: sending {"Remove":[...]}
+   * deleted every row in the table). So an empty or non-numeric list must never
+   * reach the network.
+   */
+  Mapi.prototype.delRows = async function (key, ids, chunk) {
+    if (ALLOWED_DELETE_ROW.indexOf(String(key).toUpperCase()) === -1) {
+      throw new Error("This plugin is not permitted to delete from /db/" + key + ".");
+    }
+    var list = (ids || []).map(String).filter(function (v) { return /^[0-9]+$/.test(v); });
+    if (list.length !== (ids || []).length) {
+      throw new Error("A row delete needs numeric ids; refusing to send a list with anything else in it.");
+    }
+    if (!list.length) return { deleted: 0 };
+    var size = chunk > 0 ? chunk : 100;
+    var done = 0;
+    for (var i = 0; i < list.length; i += size) {
+      var slice = list.slice(i, i + size);
+      this.calls++;
+      var path = "/db/" + key + "/" + slice.join(",");
+      var r = await fetch(this.base + path, { method: "DELETE", headers: this.headers() });
+      var body = await r.json().catch(function () { return null; });
+      if (body && body.error) throw new MapiError(errText(body.error), { path: "/db/" + key });
+      done += slice.length;
+    }
+    return { deleted: done };
+  };
+
+  /* ------------------------------------------------------------ other GETs */
+
+  /** GET a whitelisted non-/db/ path. */
+  Mapi.prototype.get = async function (path) {
+    if (ALLOWED_GET.indexOf(path) === -1) {
+      throw new Error("This plugin is not permitted to read " + path + ".");
+    }
+    this.calls++;
+    var r = await fetch(this.base + path, { headers: { "MAPI-Key": this.key } });
+    var text = await r.text();
+    this.bytes += text.length;
+    var body = null;
+    try { body = JSON.parse(text); } catch (e) { /* left null */ }
+    if (r.status === 404) return { rows: null, status: "absent", reason: "no such path" };
+    if (!body) return { rows: null, status: "error", reason: "unparseable response" };
+    if (body.error) return { rows: null, status: "error", reason: errText(body.error) };
+    return { rows: body, status: "ok" };
+  };
+
+  /**
+   * /ope/SECTPROP — what CIVIL NX computes for every section. This is the
+   * independent quantity every rebuilt shape is checked against, so a failure
+   * here weakens the checks rather than stopping the run: it is reported.
+   */
+  Mapi.prototype.sectProp = async function () {
+    var res = await this.get("/ope/SECTPROP");
+    if (res.status !== "ok") return { rows: null, status: res.status, reason: res.reason };
+    var body = res.rows;
+    return { rows: body.SECTPROP || body, status: "ok" };
+  };
+
+  /** The nodes and elements selected in CIVIL NX right now (GET /view/SELECT). */
+  Mapi.prototype.selection = async function () {
+    var res = await this.get("/view/SELECT");
+    var sel = res.rows && res.rows.SELECT;
+    if (!sel) return { nodes: [], elements: [], status: res.status, reason: res.reason };
+    return {
+      nodes: (sel.NODE_LIST || []).map(Number),
+      elements: (sel.ELEM_LIST || []).map(Number),
+      beams: ((sel.ELEM_TYPE || {}).BEAM_LIST || []).map(Number),
+      status: "ok"
+    };
+  };
+
   /* ---------------------------------------------------------------- tables */
 
   /** POST /view/CAPTURE — the only image route on the API. Nothing hits disk. */
@@ -270,6 +358,7 @@
     MapiError: MapiError,
     DEFAULT_BASE: DEFAULT_BASE,
     ALLOWED_POST: ALLOWED_POST,
+    ALLOWED_GET: ALLOWED_GET,
     ALLOWED_PUT: ALLOWED_PUT,
     ALLOWED_DELETE_ROW: ALLOWED_DELETE_ROW,
     baseFromLocation: baseFromLocation,

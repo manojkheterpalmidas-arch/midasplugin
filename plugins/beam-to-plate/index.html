@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Convert MIDAS CIVIL NX beam elements into plate meshes of their cross-section walls">
+  <meta name="description" content="Convert MIDAS CIVIL NX beam elements into a plate mesh of their cross-section, with loads, supports and groups carried across">
   <title>Beam to Plate</title>
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <link rel="manifest" href="./manifest.json">
@@ -13,22 +13,18 @@
 <main class="shell">
 
   <!-- The drag surface is a SIBLING of the controls, never their ancestor: a
-       press on the close button can then never start a window drag, whatever
-       e.target resolves to inside the button. See references/host.md. -->
+       press on the close button can then never start a window drag. -->
   <header class="app-head">
     <div id="drag-surface" class="brand" title="Drag this bar to move the plugin window">
       <img src="./icon.svg" alt="" class="brand-icon">
       <div>
         <h1>Beam to Plate</h1>
-        <p>MIDAS CIVIL NX &middot; v1.0.0</p>
+        <p>MIDAS CIVIL NX &middot; v2.0.0</p>
       </div>
     </div>
     <div class="head-actions">
-      <!-- The claim, worded exactly, and backed by the whitelists in js/mapi.js:
-           ALLOWED_PUT is NODE/ELEM/THIK/GRUP, ALLOWED_DELETE_ROW is ELEM, and
-           the only POST permitted is /view/CAPTURE. -->
-      <span class="claim writes" title="Reads /db/NODE, ELEM, SECT, MATL, THIK, GRUP. Writes /db/NODE, ELEM, THIK and GRUP, and deletes single /db/ELEM rows only when you ask it to. Nothing is written until you press Write.">
-        &#9998; Writes NODE &middot; ELEM &middot; THIK &middot; GRUP
+      <span class="claim writes" title="Reads the model and /ope/SECTPROP. Writes nodes, plates, thicknesses, rigid links, the loads carried over from the beams, element temperatures, boundary and structure groups — and deletes the source beams only when you ask. Nothing is written until you press Write.">
+        &#9998; Writes NODE &middot; ELEM &middot; THIK &middot; RIGD &middot; CNLD &middot; GRUP
       </span>
       <span id="conn-badge" class="badge neutral">Not connected</span>
       <button id="btn-theme" class="btn ghost" type="button">Dark</button>
@@ -47,15 +43,15 @@
     </div>
   </section>
 
-  <!-- The run controls sit in their own panel that no option can hide. -->
   <section class="panel run">
     <div class="run-bar">
       <span class="run-lead">
-        Replace beam elements with a plate mesh of their cross-section walls.
-        Nothing is written until you press <strong>Write to model</strong>.
+        Replace beams with a plate mesh of their cross-section. Loads, supports and
+        groups come across. Nothing is written until you press <strong>Write to model</strong>.
       </span>
       <button id="btn-plan" class="btn primary" type="button" disabled>Read model &amp; plan</button>
       <button id="btn-commit" class="btn danger" type="button" disabled>Write to model</button>
+      <button id="btn-undo" class="btn ghost" type="button" hidden>Undo the conversion</button>
     </div>
     <div id="progress" hidden>
       <p id="progress-line" class="progress-line">Idle</p>
@@ -76,11 +72,15 @@
       <section class="panel">
         <h2>Which beams</h2>
         <div class="opt">
-          <label><input type="radio" name="sel-mode" value="all" checked> Every beam element</label>
+          <label><input type="radio" name="sel-mode" value="selection" checked>
+            Selected in CIVIL NX <button id="btn-refresh-sel" class="btn tiny" type="button">Refresh</button></label>
+          <label><input type="radio" name="sel-mode" value="all"> Every beam element</label>
           <label><input type="radio" name="sel-mode" value="sect"> By section</label>
+          <label><input type="radio" name="sel-mode" value="group"> By structure group</label>
           <label><input type="radio" name="sel-mode" value="ids"> By element id</label>
         </div>
         <select id="sel-sects" multiple size="4" disabled></select>
+        <select id="sel-groups" multiple size="3" disabled></select>
         <input id="sel-ids" type="text" placeholder="101-118, 205, 300" disabled>
         <p id="sel-note" class="hint">Connect and plan to see what the model holds.</p>
       </section>
@@ -92,20 +92,23 @@
           <input id="opt-long" type="number" step="0.05" min="0" value="0.5">
           <label for="opt-trans">Across each wall</label>
           <input id="opt-trans" type="number" step="0.05" min="0" value="0.25">
-          <label for="opt-facets">Pipe facets</label>
-          <input id="opt-facets" type="number" step="1" min="8" max="64" value="16">
+          <label for="opt-facets">Pipe / curve facets</label>
+          <input id="opt-facets" type="number" step="1" min="8" max="64" value="24">
           <label for="opt-tol">Merge tolerance</label>
           <input id="opt-tol" type="number" step="0.0001" min="0.000001" value="0.0001">
-          <label for="opt-origin">Node line at</label>
-          <select id="opt-origin">
-            <option value="bbox" selected>Centre of the section (Center-Center)</option>
-            <option value="centroid">Section centroid</option>
+          <label for="opt-thick-tol">Thickness grouping</label>
+          <input id="opt-thick-tol" type="number" step="0.001" min="0" max="0.2" value="0.005">
+          <label for="opt-calibrate">Match beam stiffness</label>
+          <select id="opt-calibrate">
+            <option value="generic" selected>Where the shape is idealised</option>
+            <option value="all">Every section</option>
+            <option value="off">Never — keep true plate thicknesses</option>
           </select>
         </div>
         <p class="hint">
-          Target sizes are in the model&rsquo;s own length unit, the same one
-          <code>/db/NODE</code> reports coordinates in. A size of 0 means one
-          division.
+          Sizes are in the model&rsquo;s own length unit. Matching the beam stiffness
+          adjusts plate thicknesses smoothly, by a few percent, so the mesh has the
+          same area, centroid and second moments as the section.
         </p>
       </section>
 
@@ -114,17 +117,24 @@
         <div class="grid-2">
           <label for="opt-group">Structure group</label>
           <input id="opt-group" type="text" value="B2P mesh" maxlength="16">
+          <label for="opt-bngr">Boundary group</label>
+          <input id="opt-bngr" type="text" value="B2P links" maxlength="16">
         </div>
         <label class="check"><input id="opt-reuse" type="checkbox" checked>
           Reuse existing nodes within the merge tolerance</label>
-        <label class="check danger-check"><input id="opt-delete" type="checkbox">
-          Delete the source beams after the plates land</label>
+        <label class="check"><input id="opt-loads" type="checkbox" checked>
+          Carry the beam loads onto the plates</label>
+        <label class="check"><input id="opt-link-all" type="checkbox">
+          Put a rigid link at every member end, not only where one is needed</label>
+        <label class="check danger-check"><input id="opt-delete" type="checkbox" checked>
+          Delete the source beams once the plates land</label>
+        <label class="check"><input id="opt-orphans" type="checkbox" checked>
+          Remove the beams&rsquo; nodes when nothing else uses them</label>
         <p class="hint" id="delete-warning">
-          Deleting a beam does <strong>not</strong> move the loads, supports or
-          releases that reference it, and the plate mesh is not connected to the
-          rest of the frame &mdash; joining them needs rigid links, which this
-          plugin does not write. Leave the beams in place unless you have dealt
-          with both.
+          Deleting a beam also deletes its beam loads, so the loads are written onto
+          the plates first. Anything a beam carries that a plate cannot — tendons,
+          lanes, stage section changes — is listed under <strong>Left behind</strong>
+          before you write.
         </p>
       </section>
 
@@ -136,17 +146,17 @@
       <section id="sections-panel" class="panel" hidden>
         <h2>Sections in the selection</h2>
         <p class="hint">
-          Each wall model is checked against the area the model publishes for the
-          section. <strong>Only the solid-rectangle pair (H, B) has been verified
-          against a live model</strong> &mdash; every other dimension order below
-          is read off the section dialog and is why the check exists. Correct any
-          value and the check reruns.
+          Two checks, and they mean different things. <strong>Read</strong> compares the
+          outline this plugin read against the properties CIVIL NX publishes — a miss
+          means the dimensions were read wrongly. <strong>Plates</strong> compares the
+          plate model against the section — a few percent is idealisation, not error.
+          Correct any dimension and both rerun.
         </p>
         <div class="table-wrap">
           <table class="grid" id="sect-table">
             <thead>
-              <tr><th>Section</th><th>Shape</th><th>Dimensions</th>
-                  <th class="num">Wall area</th><th>Area check</th><th>Drawing</th></tr>
+              <tr><th>Section</th><th>From</th><th>Dimensions</th>
+                  <th>Read</th><th>Plates</th><th>Drawing</th></tr>
             </thead>
             <tbody id="sect-body"></tbody>
           </table>
@@ -157,6 +167,13 @@
         <h2>The plan</h2>
         <div id="plan-stats" class="stats"></div>
         <div id="mesh-preview" class="preview"></div>
+        <div id="plan-notes" class="notes"></div>
+        <div class="table-wrap">
+          <table class="grid" id="dangling-table" hidden>
+            <thead><tr><th>Left behind</th><th class="num">Count</th><th>On elements</th></tr></thead>
+            <tbody id="dangling-body"></tbody>
+          </table>
+        </div>
         <div class="table-wrap">
           <table class="grid" id="problem-table" hidden>
             <thead><tr><th>Not converted</th><th class="num">Count</th><th>Elements</th></tr></thead>
@@ -183,8 +200,13 @@
 
 <script src="./js/theme.js"></script>
 <script src="./js/mapi.js"></script>
+<script src="./js/geom2d.js"></script>
+<script src="./js/sect-shape.js"></script>
+<script src="./js/walls.js"></script>
 <script src="./js/section.js"></script>
 <script src="./js/mesh.js"></script>
+<script src="./js/loads.js"></script>
+<script src="./js/model.js"></script>
 <script src="./js/plan.js"></script>
 <script src="./js/commit.js"></script>
 <script src="./js/draw.js"></script>

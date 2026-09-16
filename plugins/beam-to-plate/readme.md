@@ -1,200 +1,168 @@
 # Beam to Plate — MIDAS CIVIL NX
 
-Replaces beam elements with a plate mesh of their cross-section **walls**: a
-girder becomes two flanges and a web, a box becomes four walls, a pipe becomes a
-faceted ring. Built with the `midasplugin` skill, from `assets/template`.
+**Version 2.0.0** · MIDAS IT EUROPE · [manoj@midasit.com](mailto:manoj@midasit.com)
 
-It **writes to the model** — `/db/NODE`, `/db/ELEM`, `/db/THIK` and `/db/GRUP` —
-and nothing is written until you press **Write to model**. The only POST it is
-permitted to make is `/view/CAPTURE`, and the only delete it can express is a
-single `/db/ELEM` row. Those limits are whitelists in `js/mapi.js`, and the
-offline suite asserts them.
+Replaces beam elements with a plate mesh of their cross-section, and brings the
+rest of the model with it: the supports and elements at each end stay connected
+through rigid links, the beam loads become nodal loads on the plates, and the
+structure groups keep their members so construction stages still work.
 
-## What it does
+It converts **any section CIVIL NX will give geometry for** — rolled and
+fabricated steel, PSC girders and box girders, composite and general composite
+sections, tapered members, value sections and catalogue sections — and says
+plainly, per section, how close the plate model is to the section it replaces.
 
-1. Reads `NODE`, `ELEM`, `SECT`, `MATL`, `THIK` and `GRUP`.
-2. Interprets every section used by the selection as a **wall model** —
-   centrelines in section-local (y, z) with a thickness each.
-3. **Checks each wall model's area against the area the model publishes for that
-   section**, and refuses to convert one that misses.
-4. Meshes each beam: stations along the member, pieces across each wall, nodes
-   shared wherever walls or members meet.
-5. Shows the cross-sections, the mesh, the counts and a volume check.
-6. On Write: re-reads the model, writes thicknesses, nodes and plates, **reads
-   every id back**, verifies the plates landed, then writes the group.
+## Use
 
-## The area check, and why it is the centre of the design
+1. **Select the beams in CIVIL NX**, or pick them here by section, by structure
+   group, or by element id. The plugin reads the live selection.
+2. **Read model & plan.** Nothing is written. You get every section's
+   interpretation with two checks, the mesh it would build, the links it would
+   add, the loads it would move, and what would be left behind.
+3. Correct anything that needs correcting — a dimension, a material for a deck
+   slab, the mesh size.
+4. **Write to model.** Then **Undo the conversion** if you want it back: the
+   plates, their nodes, the links and the converted loads are removed and the
+   beams are put back, with their loads.
 
-Of everything this plugin needs to know about a section, exactly one thing has
-been measured on a live CIVIL NX: for a `DBUSER` section with `DATATYPE: 2`,
-`vSIZE = [0.4, 1.5]` published `Area 0.600000` exactly, so the pair is **(H, B)**.
+## The two checks, and why there are two
 
-Every other dimension order in `js/section.js` — the six numbers of an I-girder,
-the box, the channel, the tee, the angle, the pipe — is an informed reading of
-the section dialog and is marked `verified: false` in the code. They are the
-kind of thing that is right until it is not, and a wrong order produces a
-section of plausible size and wrong shape.
+Each section is measured twice against what CIVIL NX itself publishes for it in
+`/ope/SECTPROP`:
 
-So nothing is trusted on its own:
+**Read** — does the outline the plugin built from the section data reproduce the
+published area and second moments? A miss here means the dimensions were read
+wrongly, and the section is not converted until you say so. This is what catches
+a dimension list in an order this plugin does not know.
 
-- every wall layout is built so that **sum(thickness x centreline length) equals
-  the shape's exact gross area**, which makes the area a real function of the
-  dimension order;
-- that area is compared against what the model publishes for the section
-  (`SECT_I.STIFF`, which duplicates the `/ope/SECTPROP` set);
-- a section that misses by more than 2% is **not converted** — it is shown in
-  red with both numbers, and you either correct the dimensions in place or tick
-  "convert anyway" deliberately;
-- a section that publishes **no** area reports "no area published", never a pass.
+**Plates** — how far is the plate model from the section? Walls overlap where
+they meet and a thick wall is idealised to a line, so a few percent here is
+idealisation, not error. Above 15% the section is held back.
 
-A dimension list read in millimetres against coordinates in metres misses by a
-factor of a million, so the same check catches that too.
+**Match beam stiffness** (on by default for idealised shapes) closes the gap: the
+plate thicknesses are adjusted — smoothly, by a few percent, the smallest change
+that will do it — until the mesh has the section's own area, centroid, Iyy and
+Izz. Where the geometry cannot carry a condition (a section meshed as one flat
+plate has no lever arm across itself, so its Izz is whatever its thickness gives)
+the plugin says so rather than pretending.
 
-**If a shape's dimensions come out wrong on your model, type them in.** The
-dimension cells are editable, the check reruns as you type, and the conversion
-proceeds from what you entered. That is the intended workflow for any section
-whose order this plugin has not settled — and if you settle one, the fix belongs
-in `SHAPES` in `js/section.js` with `verified: true`.
+## Where the geometry comes from
 
-## What it converts
-
-| Shape | Wall model |
+| Source | Sections |
 |---|---|
-| `H` I / H | two flanges and a web |
-| `B` box | two flanges and two webs (the dialog's `C` is not used) |
-| `T` tee | flange and web |
-| `C` channel | two flanges and a web |
-| `L` angle | two legs |
-| `P` pipe | a faceted ring at the mid-wall radius |
-| `SB` solid rectangle | **one** plate through the mid-plane, of thickness B |
+| Its dimensions, with a wall layout measured on a live CIVIL NX | I/H, box, tee, channel, angle, pipe, double angle, double channel, inverted tee, octagon, track, solid shapes |
+| Its guide curve | PSC-I, PSC-MID, PSC-TEE, 1-cell and 2-cell boxes, composite PSC |
+| The outline in the model | PSC value sections, general composite parts, anything carrying an `OUTER_POLYGON` |
+| Its stress points | a value section whose four points enclose its published area — they are its corners |
+| A catalogue fit | `DATATYPE 1` sections: the API gives a name and no dimensions, so they are recovered from the published properties. On a rolled I the shear areas give them directly (`Asz = tw·H`, `Asy = ⅚(B1·tf1 + B2·tf2)`, verified against a live UC 356×406×287) |
+| An equivalent section | a value section with no usable geometry: an I, box, channel or tee fitted to its area, second moments and centroid. Labelled **equivalent** everywhere it appears — it is not the real shape |
 
-## What it refuses, and why
+Outlines that are not a known thin-walled shape are turned into walls by the
+**chordal axis** of a conforming triangulation: the centreline of every wall with
+its own thickness, with junctions moved to where the walls' centrelines meet and
+free ends carried out to the section's face. Compact solids with no voids become
+one mid-plane plate whose thickness follows the width at each level, which is
+exact for area and both second moments on any shape symmetric about that plane.
 
-These are refusals with reasons, not failures:
+## What comes across, and what does not
 
-- **`VALUE` sections.** Their `vSIZE` is the dialog's Size box and nothing
-  computes from it — three live sections with different `vSIZE` published
-  identical properties. There is no geometry to convert.
-- **PSC.** The `OUTER_POLYGON` is exact, but it is the *solid* outline of a
-  section with voids. Meshing a box girder as plates needs the void outlines
-  too, and those are not settled.
-- **COMPOSITE.** `SECT_BEFORE` is the girder alone; converting from it would
-  silently drop the deck slab.
-- **COMPOSITE-GEN.** The `OUTER_POLYGON` is a vertex pool with the connectivity
-  in `SECT_I.LINE`; read naively it draws a bowtie.
-- **TAPERED.** Two sections, i and j. It needs a mesh that varies along the
-  member.
-- **Solid round, double angle, double channel.**
-- Anything that is not a `BEAM` element, and any beam whose nodes are missing.
+**Carried over:** beam loads (uniform, trapezoidal, concentrated, moments,
+pressure, eccentric, projected), element temperatures, structure groups, beam end
+offsets (the mesh starts at the offset end and the link spans the rigid zone).
 
-## Limitations you must know before using the output
+Beam loads become nodal loads with the **resultant preserved exactly** — the same
+force and the same moment about any point. Checked against the base reactions
+CIVIL NX reported for the same loads on a real cantilever: eight load types, all
+matching to fifteen decimal places.
 
-- **The plate mesh is not connected to the rest of the frame.** Nodes are shared
-  where the generated geometry coincides (and, with "Reuse existing nodes" on,
-  with nodes the model already had at the same point), but a beam meeting the
-  mesh end-on connects at one node only. Joining a beam to a plate end section
-  properly needs **rigid links, which this plugin does not write**.
-- **Loads, supports and releases on a converted beam are not migrated.** They
-  stay on the beam. If you delete the beam they are left pointing at nothing.
-  Deleting the sources is off by default for that reason.
-- The wall model is a **thin-walled idealisation**: root fillets, haunches,
-  tapers and stiffeners are not represented, and a solid section becomes a plate
-  whose weak-axis behaviour is a thickness rather than a shape.
-- Section **stiffeners and diaphragms** are not generated.
+**Left behind, and listed before you write:** tendons and their prestress, lanes,
+composite sections for construction stage, stiffness scale factors, temperature
+gradients, beam section temperatures, inelastic hinges, fibre divisions, tapered
+section groups. None of these can follow a beam into plates. They are reported
+against the elements they belong to, because deleting the beam takes them with it.
 
-## Verified, and not
+## Limits worth knowing
 
-Measured on a live CIVIL NX 2026 (through the skill's references):
+- **A plate model is more flexible than a beam model, and that is the point.** A
+  wide box girder shows shear lag and cross-section distortion a beam cannot: on
+  the verification model the PSC box deflects 8.5% more. The steel sections
+  agreed within about 2%.
+- **A rigid link makes the section rigid where it lands.** Links are written only
+  where a node carries something else; a member end with nothing on it gets none.
+- **End releases are not converted.** A released beam end becomes a rigid
+  connection. Elements with releases are listed before you write.
+- **Lopsided solid sections** — a precast edge beam, say — cannot be represented
+  by one plate to better than about 9% on their weak axis. The plugin reports it.
+- **Torsion is not matched.** The checks cover area, centroid and both second
+  moments; a plate mesh's torsional stiffness is whatever the closed or open
+  shape gives.
+- Mesh size is yours to choose. A coarse mesh is a poor plate model however
+  exactly its section was read.
 
-- error semantics, `/db/` read statuses, `PUT` upsert and the
-  append-at-next-free-slot behaviour — the whole write path is built on these;
-- the THIK record shape (`T_IN`/`T_OUT`, not `VSIZE`/`THIK_IN`);
-- a plate's thickness is referenced through the element's `SECT` field, and
-  `SECT` ids and `THIK` ids are independent spaces;
-- `DBUSER` `DATATYPE: 2` `vSIZE` is (H, B).
+## Verified against a live CIVIL NX
 
-**Not verified, and stated in the UI as well as here:**
+Built and checked against CIVIL NX 2026 on 15–16 September 2026.
 
-- every dimension order except `SB` (see above);
-- the **sign of the beta angle** rotation. A wrong sign spins the section about
-  the member and changes nothing numeric — check the picture, not the numbers;
-- the **fallback axes for a member parallel to global Z**. Local z is taken along
-  global X, which is the documented convention for a vertical member, but it was
-  not measured;
-- **which point of the section the node line passes through.** It is offered as
-  a choice — centre of the section (the dialog's Center-Center) or the centroid
-  — defaulted to the first. Getting it wrong shifts the mesh sideways; it does
-  not distort it.
-
-Settling any of these is a probe, not a guess: write a scratch model, perturb
-one dimension at a time, read the published properties back. See
-`references/probing.md` in the skill.
+- **Geometry conventions measured, not assumed.** One section per shape code was
+  written to a live model and its properties read back: the I section's top
+  flange, the box's web spacing (`C` is centre-to-centre — webs at the outer
+  faces give Izz 60% too high), the angle's leg at the top, the double shapes'
+  gap, the inverted tee's flange. The offset letters, `OFFSET_CENTER` and the
+  user-offset reference were settled by analysis, as was the beta-angle sign and
+  the local axes of vertical members.
+- **A whole model converted and compared.** Four structures — a two-span
+  continuous I girder, a simply supported steel box on a top offset, a four-span
+  PSC box girder, and a pier at a 30° beta angle under a three-component tip load
+  — were analysed as beams, converted (13 beams → 2,784 plates, 2,908 nodes, 10
+  links, 2,859 loaded nodes), and analysed again. **Total reactions matched
+  exactly.** Deflections: I girder −2.2%, steel box −1.9%, pier −0.3% to −0.7%,
+  PSC box +8.5%.
+- **Undone and re-checked.** The undo put the model back to the digit: every
+  displacement identical to the original beam analysis.
 
 ## Run it without CIVIL NX
 
-```bash
+```
 node mock-midas/server.js
 ```
 
-Then open — over **HTTP, never `file://`**:
+then open `http://localhost:8773/index.html?mapiKey=mock-key&redirectTo=http://localhost:8773/civil`.
+
+The mock's section library is not invented: it is 26 real sections as CIVIL NX
+returned them, each with the properties CIVIL NX computed for it.
 
 ```
-http://localhost:8773/index.html?mapiKey=mock-key&redirectTo=http://localhost:8773/civil
+node test/run.js     # 171 assertions, no CIVIL NX needed
 ```
-
-The mock carries ten sections covering every supported shape, a VALUE section, a
-PSC section, and one section whose published area and dimension list genuinely
-disagree, so the area check has something real to catch.
-
-## Run the tests
-
-```bash
-node test/run.js
-```
-
-134 assertions against the mock over real HTTP. The two that matter most:
-
-- **the area gate** — each section's area, computed by the plugin from `vSIZE`,
-  against an area the mock states as a hand-computed literal;
-- **the volume invariant** — for every element, the sum over generated plates of
-  (area x thickness) must equal section area x member length. A wrong local
-  axis, a dropped subdivision or a bad node merge breaks it.
-
-## Run it in CIVIL NX
-
-```powershell
-..\..\assets\scripts\pack.ps1 -Source . -Out "$env:USERPROFILE\Downloads\Beam to Plate v1.0.0.zip"
-..\..\assets\scripts\verify-zip.ps1 -Source . -Zip "$env:USERPROFILE\Downloads\Beam to Plate v1.0.0.zip"
-```
-
-`pack.ps1` excludes `test/`, `mock-midas/` and `package.json`, writes
-forward-slash separators (`Compress-Archive` does not) and refuses to finish
-unless `index.html` is at the zip root.
 
 ## What is where
 
 | File | Role |
 |---|---|
-| `js/mapi.js` | the API client — error semantics, and the POST/PUT/DELETE whitelists that back the header claim |
-| `js/section.js` | SECT row → wall model, the shape tables, and the area gate |
-| `js/mesh.js` | element local axes, the node pool, and the mesh itself |
-| `js/plan.js` | reading, selecting, the section study, the size estimate, the plan |
-| `js/commit.js` | the only file that writes: drift check, id read-back, verification |
-| `js/draw.js` | the cross-section and mesh drawings |
-| `js/app.js` | wiring only |
-| `mock-midas/server.js` | the API and the static files, from one process |
+| `js/mapi.js` | the API client: error semantics, the write/delete whitelists, batched row deletes |
+| `js/geom2d.js` | polygon properties, conforming triangulation, the chordal axis |
+| `js/walls.js` | the wall layouts, outline → walls, thickness calibration |
+| `js/sect-shape.js` | section outlines (shared with Model Report) |
+| `js/section.js` | a `/db/SECT` row → wall models per end, placed on the node line, with the checks |
+| `js/mesh.js` | local axes, the node pool, meshing, tapered interpolation |
+| `js/loads.js` | beam loads → nodal loads, resultant preserved |
+| `js/model.js` | where links are needed, which groups to join, what is left behind |
+| `js/plan.js` | reading the model and building the plan — writes nothing |
+| `js/commit.js` | the only writer, and the undo |
+| `js/draw.js` | the section and mesh drawings |
+| `mock-midas/` | the offline CIVIL NX, and its live-derived section library |
 | `test/run.js` | the offline suite |
 
 ## Things not to undo
 
-- The area gate. Without it the plugin is a confident guess about six numbers.
-- The id read-back in `commit.js`. `Assign` at a key that does not exist ignores
-  the number and appends at the next free slot, and a plate mesh is nothing but
-  ids.
-- The drift check. A plan built minutes ago describes a model the user may have
-  edited since.
-- `MAX_PLATES` in `app.js`. `buildPlan` is synchronous, and a synchronous minute
-  is a plugin whose close button does not respond.
-- The group being written **last**, in its own try/catch, so a schema
-  disagreement degrades to a warning rather than losing a mesh that landed
-  cleanly.
+- **The two checks.** Without them the plugin is a confident guess about a list
+  of numbers whose order it cannot see.
+- **The id read-back in `commit.js`.** Node ids are matched by coordinate after
+  they are written, never assumed.
+- **The drift check.** The model is re-read and compared with the plan before
+  anything is written.
+- **The client's whitelists.** No whole-table delete exists in it: `DELETE
+  /db/SECT` empties a section library, and a delete with a body was measured
+  doing exactly that.
+- **Loads before deletion.** Deleting a beam deletes its beam loads, so the
+  converted loads are written first.

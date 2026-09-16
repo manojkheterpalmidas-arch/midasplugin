@@ -306,3 +306,104 @@ select[multiple] { width: 100%; margin-top: 6px; }
 .sect-svg { line-height: 0; }
 .gate-note { font-size: 11px; color: var(--ink-soft); display: block; margin-top: 3px; }
 .reason { font-size: 12px; color: var(--warn); max-width: 340px; display: block; }
+
+/* ---------------------------------------------------------- v2 additions --
+   Drawing colours are variables so the section and mesh SVGs follow the theme;
+   draw.js never hard-codes a colour. */
+:root {
+  --sect-fill: #dbe5f5;
+  --sect-line: #8ba3c7;
+  --wall-a:    #2f6bed;
+  --wall-b:    #0f9d76;
+  --tie:       #c2410c;
+  --nodeline:  #b8299b;
+  --plate-a:   #c8d8f3;
+  --plate-b:   #c6ebdd;
+  --plate-edge:#5b7ba8;
+  --muted:     #8993a5;
+}
+html[data-theme="dark"] {
+  --sect-fill: #24324a;
+  --sect-line: #46587a;
+  --wall-a:    #6f9bff;
+  --wall-b:    #4fd3a8;
+  --tie:       #ff9d5c;
+  --nodeline:  #ef7fd3;
+  --plate-a:   #2b3a55;
+  --plate-b:   #23453c;
+  --plate-edge:#6d84ab;
+  --muted:     #7b879c;
+}
+
+.btn.tiny {
+  padding: 1px 6px;
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+/* the option lists stack, and a disabled picker stays visible but quiet */
+.opt { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.opt label { display: flex; align-items: center; gap: 6px; }
+#sel-sects, #sel-groups, #sel-ids {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+#sel-sects:disabled, #sel-groups:disabled, #sel-ids:disabled { opacity: .45; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.grid-2 input, .grid-2 select {
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.grid-2 select { grid-column: 2 / 3; }
+
+.check { display: flex; align-items: flex-start; gap: 6px; margin-top: 8px; font-size: 12px; }
+.check.danger-check { color: var(--bad); }
+
+.dims { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.dim { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-soft); }
+.dim input { width: 74px; padding: 2px 4px; font-size: 11px; border: 1px solid var(--line);
+             border-radius: 5px; background: var(--panel); color: var(--ink); }
+.dim.wide { width: 100%; }
+.dim.wide select { flex: 1; padding: 2px 4px; font-size: 11px; border: 1px solid var(--line);
+                   border-radius: 5px; background: var(--panel); color: var(--ink); }
+
+.gate-note { display: block; margin-top: 3px; font-size: 11px; line-height: 1.35; color: var(--ink-soft); }
+.notes { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.sect-svg { width: 190px; }
+.sect-svg svg { display: block; }
+
+.stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.stat {
+  min-width: 92px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.stat b { display: block; font-size: 15px; font-weight: 650; }
+.stat span { font-size: 11px; color: var(--ink-soft); }
+
+.preview { margin: 8px 0; overflow: auto; background: var(--bg); border: 1px solid var(--line);
+           border-radius: var(--radius); }
+.preview img { display: block; max-width: 100%; }
+.warn-list { margin: 8px 0 0; padding-left: 18px; font-size: 12px; color: var(--warn); }
+.warn-list li { margin-bottom: 4px; }

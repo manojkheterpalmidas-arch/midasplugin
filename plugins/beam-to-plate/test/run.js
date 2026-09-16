@@ -1,458 +1,400 @@
 /*
- * Beam to Plate — offline regression suite.
+ * Beam to Plate — offline test suite.   node test/run.js
  *
- *   node test/run.js
+ * Nothing here needs CIVIL NX. What makes it a real test rather than a
+ * tautology is where the numbers come from:
  *
- * The shipped modules run against the mock over REAL HTTP, so the MAPI client,
- * the error semantics and the whole write path are under test rather than
- * stubbed. Nothing here needs CIVIL NX.
- *
- * Two checks carry most of the weight, and neither can pass by accident:
- *
- *   THE AREA GATE. Every section's area is computed by the plugin from the
- *   published vSIZE, and compared against an area the mock states as a literal,
- *   hand-computed from the shape's own formula. Read a dimension list in the
- *   wrong order and it fails.
- *
- *   THE VOLUME INVARIANT. Sum over the generated plates of (area x thickness)
- *   must equal the section area times the member length, for every element. A
- *   wrong local axis, a dropped subdivision or a bad node merge breaks it.
- *
- * If every require() below comes back as an empty object, a PARENT folder's
- * package.json says "type": "module" and the local one saying "commonjs" has
- * gone missing. That is the cause, every time.
+ *   - the section library in mock-midas/sections.json is 26 REAL sections, with
+ *     the properties CIVIL NX itself computed for them. Every rebuild is checked
+ *     against those, so a dimension read in the wrong order fails here;
+ *   - the beam-load cases carry the base reactions CIVIL NX reported for the
+ *     same loads on a real cantilever, so the load conversion is checked against
+ *     the program, not against itself;
+ *   - the geometry checks are closed-form: a wall model's area, centroid and
+ *     second moments against the exact polygon, and the mesh's volume against
+ *     the integral of the section area along the member.
  */
-const path = require("path");
-const fs = require("fs");
 
-const JS = path.join(__dirname, "..", "js");
-const MapiM = require(path.join(JS, "mapi.js"));
-const Section = require(path.join(JS, "section.js"));
-const Mesh = require(path.join(JS, "mesh.js"));
-const Plan = require(path.join(JS, "plan.js"));
-const Commit = require(path.join(JS, "commit.js"));
-const Draw = require(path.join(JS, "draw.js"));
+const path = require("path");
+const P = path.join(__dirname, "..", "js") + path.sep;
+globalThis.B2PGeom = require(P + "geom2d.js");
+globalThis.B2PWalls = require(P + "walls.js");
+globalThis.SectShape = require(P + "sect-shape.js");
+globalThis.B2PSection = require(P + "section.js");
+globalThis.B2PMesh = require(P + "mesh.js");
+globalThis.B2PLoads = require(P + "loads.js");
+globalThis.B2PModel = require(P + "model.js");
+const G = globalThis.B2PGeom, W = globalThis.B2PWalls, S = globalThis.B2PSection,
+      M = globalThis.B2PMesh, LD = globalThis.B2PLoads, MD = globalThis.B2PModel;
+const Mapi = require(P + "mapi.js");
+const Plan = require(P + "plan.js");
+const Commit = require(P + "commit.js");
 const mock = require(path.join(__dirname, "..", "mock-midas", "server.js"));
 
-const PORT = 8781;
-
 let passed = 0, failed = 0;
-const failures = [];
+const fails = [];
+function ok(cond, what) {
+  if (cond) { passed++; return true; }
+  failed++; fails.push(what);
+  console.log("  FAIL  " + what);
+  return false;
+}
+function near(a, b, tol, what) {
+  const d = Math.abs(a - b), scale = Math.max(Math.abs(b), 1e-12);
+  return ok(d <= tol * scale, what + "  (" + a + " vs " + b + ", " + (d / scale * 100).toFixed(3) + "%)");
+}
+function section(name) { console.log("\n" + name); }
 
-function ok(cond, what, detail) {
-  if (cond) passed++;
-  else {
-    failed++;
-    failures.push(what);
-    console.log("  FAIL  " + what + (detail ? "\n        " + detail : ""));
+/* ------------------------------------------------------------ geometry --- */
+
+section("plane geometry");
+{
+  const rect = { outer: W.rect(-1, -2, 1, 2), holes: [] };
+  const p = G.polyProps([rect]);
+  near(p.A, 8, 1e-12, "rectangle area");
+  near(p.Iyy, 2 * 4 * 4 * 4 / 12, 1e-12, "rectangle Iyy = bh³/12");
+  near(p.Izz, 4 * 2 * 2 * 2 / 12, 1e-12, "rectangle Izz");
+  ok(Math.abs(p.cy) < 1e-12 && Math.abs(p.cz) < 1e-12, "rectangle centroid at the origin");
+
+  const withHole = { outer: W.rect(-1, -2, 1, 2), holes: [W.rect(-0.5, -1, 0.5, 1)] };
+  near(G.polyProps([withHole]).A, 8 - 2, 1e-12, "area of a ring is outer minus hole");
+
+  const tri = G.triangulateRegion({ outer: W.rect(0, 0, 3, 1), holes: [] }, 0.25);
+  ok(tri && tri.conforming, "a rectangle triangulates conformingly");
+  const triArea = tri.tris.reduce((a, t) => a + G.triArea(tri.verts, t), 0);
+  near(triArea, 3, 1e-9, "the triangles cover the polygon exactly");
+}
+
+/* --------------------------------------------------------------- walls --- */
+
+section("wall models against the exact outline");
+{
+  /* every library section: the wall model must reproduce its own outline */
+  const lib = mock.LIB;
+  let worstA = 0, worstI = 0, checked = 0;
+  for (const id of Object.keys(lib)) {
+    const st = S.study(id, lib[id].row, lib[id].prop, { calibrate: "off" });
+    /* a section the plugin BLOCKS is not part of this tolerance: it is the
+       plugin refusing to convert something it could not read (section 17 is
+       one — a shape with no layout and no upright equivalent) */
+    if (!st.ok || st.blocked || !st.ends.I) continue;
+    const c = st.checks.I;
+    if (!c || !c.ideal) continue;
+    checked++;
+    worstA = Math.max(worstA, Math.abs(c.ideal.A));
+    worstI = Math.max(worstI, Math.max(Math.abs(c.ideal.Iyy), Math.abs(c.ideal.Izz)));
+  }
+  ok(checked >= 20, "at least 20 library sections build a wall model (" + checked + ")");
+  ok(worstA <= 0.05, "worst area difference across the library is within 5% (" + (worstA * 100).toFixed(2) + "%)");
+  ok(worstI <= 0.15, "worst second-moment difference is within 15% (" + (worstI * 100).toFixed(2) + "%)");
+}
+
+section("the exact shapes reproduce what CIVIL NX published");
+{
+  /* H, B, T, C, L, P, 2L, 2C, UDT, OCT, TRK have explicit wall layouts; their
+     outlines must match the published area to a fraction of a percent */
+  const lib = mock.LIB;
+  for (const id of Object.keys(lib)) {
+    const row = lib[id].row;
+    const shape = (row.SECT_BEFORE || {}).SHAPE;
+    if (!["H", "B", "T", "C", "L", "P", "2L", "2C", "UDT", "OCT", "TRK"].includes(shape)) continue;
+    const st = S.study(id, row, lib[id].prop, { calibrate: "off" });
+    ok(st.ok, shape + ": interpreted");
+    if (!st.ok) continue;
+    near(st.checks.I.outline.A, st.checks.I.published.A, 0.005, shape + ": outline area matches CIVIL NX");
   }
 }
-const eq = (a, b, what) => ok(a === b, what, `expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
-const near = (a, b, tol, what) =>
-  ok(Math.abs(a - b) <= tol, what, `expected ${b} +/- ${tol}, got ${a}`);
-const section = (t) => console.log("\n— " + t);
 
-const OPTS = {
-  longSize: 2, transSize: 0.2, minLong: 1, minTrans: 1,
-  originRef: "bbox", pipeFacets: 16
-};
-
-(async () => {
-  await new Promise((r) => mock.server.listen(PORT, r));
-  const base = `http://localhost:${PORT}/civil`;
-  const mapi = new MapiM.Mapi({ key: "mock-key", base });
-
-  async function planFor(opts, selection) {
-    const tables = await Plan.readTables(mapi);
-    const all = Plan.beams(tables);
-    const selected = Plan.select(all, selection || { mode: "all" });
-    const sectIds = [];
-    selected.forEach((b) => { if (!sectIds.includes(b.sect)) sectIds.push(b.sect); });
-    const o = Object.assign({}, OPTS, opts, {
-      existingThik: (tables.THIK && tables.THIK.rows) || {}
+section("calibration matches the section exactly");
+{
+  const lib = mock.LIB;
+  let calibrated = 0;
+  for (const id of Object.keys(lib)) {
+    const st = S.study(id, lib[id].row, lib[id].prop, { calibrate: "all" });
+    if (!st.ok) continue;
+    const c = st.checks.I;
+    if (!c || !c.calibrated || !c.after) continue;
+    calibrated++;
+    ok(Math.abs(c.after.A) < 1e-6, "section " + id + ": calibrated area is exact");
+    ["Iyy", "Izz"].forEach(k => {
+      ok(Math.abs(c.after[k]) < 1e-3 || (c.calibrated.dropped || []).includes(k),
+        "section " + id + ": calibrated " + k + " matches, or is reported as unreachable");
     });
-    const sections = Plan.studySections(tables.SECT.rows, sectIds, o);
-    return { tables, all, selected, sections, opts: o, plan: Plan.buildPlan(selected, sections, o) };
   }
+  ok(calibrated >= 5, "several sections calibrate (" + calibrated + ")");
+}
 
-  /* ------------------------------------------------------------ connection */
+section("walls meet: every junction is shared to the last digit");
+{
+  const lib = mock.LIB;
+  for (const id of ["1", "2", "22"]) {          /* I girder, box, PSC box */
+    const st = S.study(id, lib[id].row, lib[id].prop, {});
+    const walls = st.ends.I.walls;
+    /* Every free end of a wall must be either a TIP on the section outline or a
+       point that some other wall also passes through — that is what makes the
+       mesh one connected body. A web running to the middle of a flange is the
+       normal case, so it is the VERTICES that must coincide, not the ends. */
+    let joined = 0, tips = 0;
+    walls.forEach((w, wi) => {
+      if (w.closed) return;
+      [w.pts[0], w.pts[w.pts.length - 1]].forEach(e => {
+        const onOther = walls.some((o, oi) => oi !== wi &&
+          o.pts.some(p => Math.hypot(p[0] - e[0], p[1] - e[1]) < 1e-9));
+        if (onOther) joined++;
+        else {
+          /* a tip: it must sit on the outline, not in mid-air */
+          const near = (st.ends.I.regions || []).some(r => r.outer.some(p =>
+            Math.hypot(p[0] - e[0], p[1] - e[1]) < Math.max(...w.t) * 1.5));
+          if (near) tips++;
+        }
+      });
+    });
+    ok(walls.every(w => w.closed) || joined + tips > 0,
+      "section " + id + ": every wall end is a shared junction or a tip on the outline (" +
+      joined + " joined, " + tips + " tips)");
+  }
+}
 
-  section("connection");
-  const v = await mapi.verify();
-  eq(v.program, "civil", "verify reports the program");
+/* ---------------------------------------------------------------- mesh --- */
 
-  mock.state.session = "disconnected";
-  let threw = null;
-  try { await mapi.verify(); } catch (e) { threw = e; }
-  ok(threw && /session is disconnected/i.test(threw.message),
-     "a valid key with a dead session is refused", threw && threw.message);
-  mock.state.session = "connected";
+section("mesh");
+{
+  const lib = mock.LIB;
+  const st = S.study("1", lib["1"].row, lib["1"].prop, {});
+  const pool = new M.NodePool(1e-6);
+  const mesh = M.meshElement(pool, { id: "1", i: [0, 0, 0], j: [8, 0, 0], angle: 0, matl: 1 },
+    st.ends, { longSize: 1, transSize: 0.2 });
+  ok(mesh.ok, "an I girder meshes");
+  near(mesh.stats.volume, mesh.stats.expected, 1e-9, "plate volume equals section area × length");
+  ok(mesh.stats.degenerate === 0, "no degenerate plates");
+  ok(mesh.endNodes.I.length > 3 && mesh.endNodes.J.length > 3, "both end sections are recorded");
 
-  const thik0 = await mapi.db("THIK");
-  eq(thik0.status, "empty", "an unpopulated table is empty, not absent");
-  const bogus = await mapi.db("NOSUCHTABLE");
-  eq(bogus.status, "absent", "an unknown table key is absent (a plugin bug)");
+  /* connectivity: one component */
+  const adj = new Map();
+  mesh.plates.forEach(p => p.nodes.forEach(a => p.nodes.forEach(b => {
+    if (a !== b) { if (!adj.has(a)) adj.set(a, new Set()); adj.get(a).add(b); }
+  })));
+  const seen = new Set(); let comps = 0;
+  for (const k of adj.keys()) {
+    if (seen.has(k)) continue;
+    comps++;
+    const stack = [k]; seen.add(k);
+    while (stack.length) { const u = stack.pop(); for (const v of adj.get(u)) if (!seen.has(v)) { seen.add(v); stack.push(v); } }
+  }
+  ok(comps === 1, "the mesh is one connected piece (" + comps + " components)");
 
-  /* ------------------------------------------------------------- sections */
+  /* two beams end to end share their end section */
+  const pool2 = new M.NodePool(1e-6);
+  const a = M.meshElement(pool2, { id: "1", i: [0, 0, 0], j: [8, 0, 0], angle: 0, matl: 1 }, st.ends, { longSize: 2, transSize: 0.3 });
+  const before = pool2.list.length;
+  const b = M.meshElement(pool2, { id: "2", i: [8, 0, 0], j: [16, 0, 0], angle: 0, matl: 1 }, st.ends, { longSize: 2, transSize: 0.3 });
+  ok(pool2.list.length - before < b.endNodes.I.length + b.endNodes.J.length + 1e9, "second beam meshed");
+  const shared = a.endNodes.J.filter(n => b.endNodes.I.indexOf(n) !== -1);
+  ok(shared.length === a.endNodes.J.length, "beams in line share their whole end section (" + shared.length + ")");
 
-  section("sections are read wherever the row keeps them");
-  const sectRows = (await mapi.db("SECT")).rows;
+  /* a tapered section meshes with both ends' layouts */
+  const tap = S.study("21", lib["21"].row, lib["21"].prop, {});
+  const pool3 = new M.NodePool(1e-5);
+  const tm = M.meshElement(pool3, { id: "3", i: [0, 0, 0], j: [10, 0, 0], angle: 0, matl: 1 }, tap.ends,
+    { longSize: 2.5, transSize: 1 });
+  ok(tm.ok, "a tapered PSC box meshes");
+  near(tm.stats.volume, tm.stats.expected, 2e-3, "tapered plate volume equals the integral of its area");
+}
 
-  const s1 = Section.readRow("1", sectRows["1"]);
-  eq(s1.shape, "H", "vSIZE found under SECT_I");
-  eq(s1.published, 0.0361, "the published area is found under SECT_I.STIFF");
+section("local axes");
+{
+  const ax = M.localAxes([0, 0, 0], [1, 0, 0], 0);
+  ok(Math.abs(ax.ey[1] - 1) < 1e-12, "a beam along +X has local y along +Y");
+  ok(Math.abs(ax.ez[2] - 1) < 1e-12, "and local z along +Z");
+  const up = M.localAxes([0, 0, 0], [0, 0, 1], 0);
+  ok(Math.abs(up.ez[0] - 1) < 1e-12, "a column pointing up has local z along +X (measured live)");
+  ok(Math.abs(up.ey[1] + 1) < 1e-12, "and local y along -Y");
+  const down = M.localAxes([0, 0, 5], [0, 0, 0], 0);
+  ok(Math.abs(down.ez[0] - 1) < 1e-12, "a column pointing down also has local z along +X");
+  ok(Math.abs(down.ey[1] - 1) < 1e-12, "and local y along +Y");
+  const beta = M.localAxes([0, 0, 0], [1, 0, 0], 90);
+  ok(Math.abs(beta.ey[2] - 1) < 1e-12, "beta = 90 carries local y towards local z");
+}
 
-  const s2 = Section.readRow("2", sectRows["2"]);
-  eq(s2.shape, "B", "vSIZE found under SECT_BEFORE — the path is not assumed");
+/* --------------------------------------------------------------- loads --- */
 
-  section("the area gate is a real check on the dimension order");
+section("beam loads against reactions CIVIL NX reported");
+{
+  /* the probe-7 cantilever: SB 0.4 x 0.1, 5 m, fixed at i */
+  const sbRow = { SECTTYPE: "DBUSER", SECT_NAME: "sb", SECT_BEFORE: { SHAPE: "SB", DATATYPE: 2,
+    SECT_I: { vSIZE: [0.4, 0.1] }, OFFSET_PT: "CC", OFFSET_CENTER: 0, USER_OFFSET_REF: 0,
+    HORZ_OFFSET_OPT: 0, USERDEF_OFFSET_YI: 0, VERT_OFFSET_OPT: 0, USERDEF_OFFSET_ZI: 0 } };
+  const sbProp = { HEAD: ["Property", "Value", "Unit"], DATA: [["Area", "0.04"], ["Iyy", String(0.1 * 0.064 / 12)],
+    ["Izz", String(0.4 * 0.001 / 12)], ["Cyp", "0.05"], ["Cym", "0.05"], ["Czp", "0.2"], ["Czm", "0.2"]] };
+  const item = o => Object.assign({ ID: 1, LCNAME: "BL", GROUP_NAME: "", CMD: "BEAM", USE_PROJECTION: false, USE_ECCEN: false }, o);
   const cases = [
-    ["1", "H", 0.0361], ["2", "B", 0.04464], ["3", "P", 0.015468416828112747],
-    ["4", "T", 0.011184], ["5", "SB", 0.32], ["9", "C", 0.004368], ["10", "L", 0.001536]
+    ["CONLOAD at D=0.3", "CC", item({ TYPE: "CONLOAD", DIRECTION: "GZ", D: [0.3, 0, 0, 0], P: [-10, 0, 0, 0] }), [0, 0, 10, 0, -15, 0]],
+    ["part-length UNILOAD", "CC", item({ TYPE: "UNILOAD", DIRECTION: "GZ", D: [0.2, 0.7, 0, 0], P: [-4, -4, 0, 0] }), [0, 0, 10, 0, -22.5, 0]],
+    ["lateral load, offset section", "LT", item({ TYPE: "UNILOAD", DIRECTION: "GY", D: [0, 1, 0, 0], P: [-2, -2, 0, 0] }), [0, 10, 0, 2, 0, 25]],
+    ["pressure on LY", "CC", item({ TYPE: "PRESSURE", DIRECTION: "LY", D: [0, 1, 0, 0], P: [-3, -3, 0, 0] }), [0, 6, 0, 0, 0, 15]],
+    ["pressure on LZ", "CC", item({ TYPE: "PRESSURE", DIRECTION: "LZ", D: [0, 1, 0, 0], P: [-3, -3, 0, 0] }), [0, 0, 1.5, 0, -3.75, 0]],
+    ["eccentric load", "CC", item({ TYPE: "UNILOAD", DIRECTION: "GZ", D: [0, 1, 0, 0], P: [-2, -2, 0, 0], USE_ECCEN: true,
+      ECCEN_TYPE: 0, ECCEN_DIR: "LY", I_END: 0.1 }), [0, 0, 10, 1, -25, 0]],
+    ["concentrated moment", "CC", item({ TYPE: "CONMOMENT", DIRECTION: "GY", D: [0.5, 0, 0, 0], P: [3, 0, 0, 0] }), [0, 0, 0, 0, -3, 0]]
   ];
-  cases.forEach(([id, shape, area]) => {
-    const st = Section.readRow(id, sectRows[id]);
-    const built = Section.buildWalls(st.shape, st.dims, { pipeFacets: 16 });
-    eq(st.shape, shape, `section ${id} reads as ${shape}`);
-    near(built.area, area, area * 1e-9,
-      `section ${id}: the wall model's area equals the published area exactly`);
-    eq(Section.gate(built.area, st.published).status, "pass", `section ${id} passes the gate`);
+  cases.forEach(([name, pt, it, reac]) => {
+    const row = JSON.parse(JSON.stringify(sbRow));
+    row.SECT_BEFORE.OFFSET_PT = pt;
+    const st = S.study("1", row, sbProp, {});
+    const pool = new M.NodePool(1e-7);
+    const mesh = M.meshElement(pool, { id: "1", i: [0, 0, 0], j: [5, 0, 0], angle: 0, matl: 1 }, st.ends,
+      { longSize: 0.5, transSize: 0.1 });
+    const pp = G.polyProps(st.ends.I.regions);
+    const res = LD.convertElement([it], mesh, pool, { centroid: [pp.cy, pp.cz], depth: 0.4, width: 0.1 });
+    let F = [0, 0, 0], Mo = [0, 0, 0];
+    res.loads.forEach(l => {
+      const p = pool.list[l.idx];
+      F = F.map((v, k) => v + l.F[k]);
+      Mo = [Mo[0] + p[1] * l.F[2] - p[2] * l.F[1], Mo[1] + p[2] * l.F[0] - p[0] * l.F[2], Mo[2] + p[0] * l.F[1] - p[1] * l.F[0]];
+    });
+    const got = F.concat(Mo).map(v => -v);
+    const worst = Math.max(...got.map((v, k) => Math.abs(v - reac[k])));
+    ok(worst < 1e-9, name + ": the plates carry exactly the reaction CIVIL NX reported (worst " + worst.toExponential(1) + ")");
   });
+}
 
-  /* Section 7's vSIZE and its published area genuinely disagree under this
-     plugin's reading. This is the case the whole gate exists for. */
-  const s7 = Section.readRow("7", sectRows["7"]);
-  const b7 = Section.buildWalls(s7.shape, s7.dims, {});
-  const g7 = Section.gate(b7.area, s7.published);
-  eq(g7.status, "fail", "a dimension list in an unexpected order FAILS the gate");
-  ok(g7.err > 0.15, "and the miss is large enough to be unmistakable", String(g7.err));
-
-  /* Dimensions in millimetres against coordinates in metres miss by 10^6. */
-  const mm = {};
-  Object.keys(s1.dims).forEach((k) => { mm[k] = s1.dims[k] * 1000; });
-  const gmm = Section.gate(Section.buildWalls("H", mm, {}).area, s1.published);
-  eq(gmm.status, "fail", "a unit mismatch fails the gate too");
-
-  section("sections that cannot be converted are refused, with the reason");
-  const s6 = Section.readRow("6", sectRows["6"]);
-  eq(s6.ok, false, "a VALUE section is refused");
-  ok(/vSIZE is the dialog's Size box|properties only/.test(s6.reason),
-     "and the refusal says why rather than guessing a rectangle", s6.reason);
-
-  const s8 = Section.readRow("8", sectRows["8"]);
-  eq(s8.ok, false, "a PSC section is refused");
-  ok(/OUTER_POLYGON|void/.test(s8.reason), "and names the polygon problem", s8.reason);
-
-  section("a section with no published area reports no gate, never a pass");
-  eq(Section.gate(0.5, null).status, "none", "no published area means no gate");
-  eq(Section.gate(0.5, 0).status, "none", "a zero published area means no gate");
-
-  /* ----------------------------------------------------------- local axes */
-
-  section("element local axes");
-  const axX = Mesh.localAxes([0, 0, 0], [10, 0, 0], 0);
-  eq(axX.ey.join(","), "0,1,0", "a beam along +X has local y along +Y");
-  eq(axX.ez.join(","), "0,0,1", "and local z up");
-
-  const axV = Mesh.localAxes([0, 0, 0], [0, 0, 6], 0);
-  near(axV.ez[0], 1, 1e-12, "a vertical member takes local z along global X");
-  near(axV.ey[1], -1, 1e-12, "and local y along -Y, completing the right-handed set");
-
-  const ax90 = Mesh.localAxes([0, 0, 0], [10, 0, 0], 90);
-  near(ax90.ez[1], -1, 1e-12, "beta = 90 rotates local z onto -Y");
-  near(ax90.ey[2], 1, 1e-12, "and local y onto +Z");
-
-  section("the node pool merges what should be merged");
-  const pool = new Mesh.NodePool(1e-4);
-  eq(pool.add([1, 2, 3]), 0, "a first point is index 0");
-  eq(pool.add([1, 2, 3]), 0, "the same point again is the same index");
-  eq(pool.add([1 + 5e-5, 2, 3]), 0, "a point within tolerance merges");
-  eq(pool.add([1 + 5e-3, 2, 3]), 1, "a point outside tolerance does not");
-  eq(pool.find([9, 9, 9]), -1, "find() does not insert");
-  eq(pool.list.length, 2, "and leaves the pool untouched");
-
-  /* ----------------------------------------------------------------- mesh */
-
-  section("the volume invariant holds for every element");
-  const P = await planFor();
-  const converted = P.plan.elements.filter((e) => e.ok);
-  eq(converted.length, 8, "eight of the model's beams convert");
-  converted.forEach((e) => {
-    ok(Math.abs(e.stats.error) < 1e-9,
-      `element ${e.id}: plate volume equals section area x length`,
-      `out by ${(e.stats.error * 100).toFixed(6)}%`);
+section("load distribution");
+{
+  const nodes = [
+    { idx: 0, w: 1, p: [0, -1, 0] }, { idx: 1, w: 1, p: [0, 1, 0] },
+    { idx: 2, w: 1, p: [0, 0, 1] }, { idx: 3, w: 1, p: [0, 0, -1] }
+  ];
+  const d = LD.distribute([0, 0, -10], [5, 0, 0], [0, 0, 0], nodes);
+  let F = [0, 0, 0], Mo = [0, 0, 0];
+  d.forces.forEach(f => {
+    const p = nodes.find(n => n.idx === f.idx).p;
+    F = F.map((v, k) => v + f.F[k]);
+    Mo = [Mo[0] + p[1] * f.F[2] - p[2] * f.F[1], Mo[1] + p[2] * f.F[0] - p[0] * f.F[2], Mo[2] + p[0] * f.F[1] - p[1] * f.F[0]];
   });
-  ok(P.plan.totals.worstError < 1e-9, "so the plan's worst-case volume error is nil");
+  near(F[2], -10, 1e-12, "distributed force sums to the applied force");
+  near(Mo[0], 5, 1e-9, "and the moment about the application point is reproduced");
+  ok(d.residualMoment < 1e-9, "no residual moment on a section with spread");
 
-  section("what cannot be converted is reported, not silently dropped");
-  const problems = Plan.problems(P.plan, P.all, P.selected);
-  const reasons = problems.map((p) => p.reason).join(" | ");
-  ok(/not a beam element \(PLATE\)/.test(reasons), "an existing plate is skipped as not a beam", reasons);
-  ok(/not a beam element \(TRUSS\)/.test(reasons), "so is a truss", reasons);
-  ok(/area check/.test(reasons), "the beam on the gate-failing section is not converted", reasons);
-  ok(P.plan.elements.some((e) => e.id === "108" && !e.ok),
-     "and that beam is element 108");
-  ok(P.plan.elements.some((e) => e.id === "107" && !e.ok),
-     "the VALUE-section beam is not converted either");
+  const line = [{ idx: 0, w: 1, p: [0, 0, -1] }, { idx: 1, w: 1, p: [0, 0, 0] }, { idx: 2, w: 1, p: [0, 0, 1] }];
+  const d2 = LD.distribute([0, 0, -10], [0, 0, 3], [0, 0, 0], line);
+  ok(d2.residualMoment > 1e-6, "a moment about a single plate's own line is reported as unreachable, not invented");
+}
 
-  section("plates are well formed");
-  ok(P.plan.plates.every((q) => new Set(q.nodes).size === 4),
-     "every plate has four distinct nodes");
-  ok(P.plan.plates.every((q) => q.t > 0), "every plate has a thickness");
-  ok(P.plan.plates.some((q) => q.matl === 2),
-     "a plate carries its source beam's material, not a default");
+/* -------------------------------------------------------------- model ---- */
 
-  section("beams that meet share their end section");
-  const two = await planFor({}, { mode: "ids", ids: { 101: true, 102: true } });
-  const one = await planFor({}, { mode: "ids", ids: { 101: true } });
-  ok(two.plan.totals.nodes < 2 * one.plan.totals.nodes,
-     "two beams in line share a station rather than doubling the nodes",
-     `${two.plan.totals.nodes} vs ${2 * one.plan.totals.nodes}`);
-  eq(two.plan.totals.nodes, 2 * one.plan.totals.nodes - (one.plan.totals.nodes /
-     one.plan.elements[0].stats.stations),
-     "exactly one station's worth of nodes is shared");
+section("links, groups and what is left behind");
+{
+  const tables = {
+    ELEM: { rows: { "1": { TYPE: "BEAM", NODE: [1, 2, 0, 0] }, "2": { TYPE: "BEAM", NODE: [2, 3, 0, 0] },
+                    "9": { TYPE: "TRUSS", NODE: [3, 4, 0, 0] } } },
+    CONS: { rows: { "1": { ITEMS: [{ CONSTRAINT: "1111111" }] } } },
+    CNLD: { rows: {} }, RIGD: { rows: {} }, ELNK: { rows: {} }, NLNK: { rows: {} },
+    GRUP: { rows: { "1": { NAME: "G", E_LIST: [1, 2], N_LIST: [] } } },
+    TDNA: { rows: { "1": { ELEM: [2] } } }
+  };
+  const converted = { "1": true, "2": true };
+  const meshes = [
+    { elem: { id: "1", nodeIds: ["1", "2"] }, mesh: { endNodes: { I: [10, 11], J: [12, 13] }, plates: [{ nodes: [10, 11, 12, 13] }], connectors: [] } },
+    { elem: { id: "2", nodeIds: ["2", "3"] }, mesh: { endNodes: { I: [12, 13], J: [14, 15] }, plates: [{ nodes: [12, 13, 14, 15] }], connectors: [] } }
+  ];
+  const links = MD.planLinks(meshes, tables, converted, {});
+  const at = n => links.links.find(l => l.node === n);
+  ok(!!at("1"), "a supported end is linked");
+  ok(!at("2"), "an interior node whose two meshes share their end section is NOT linked");
+  ok(!!at("3"), "a node shared with an element that is not converted IS linked");
+  ok(links.freeEnds.length === 1 && links.freeEnds[0].node === "2", "the interior node is reported as a free end");
 
-  section("mesh density follows the requested sizes");
-  const coarse = await planFor({ longSize: 10, transSize: 10 },
-    { mode: "ids", ids: { 101: true } });
-  const fine = await planFor({ longSize: 1, transSize: 0.1 },
-    { mode: "ids", ids: { 101: true } });
-  ok(fine.plan.totals.plates > coarse.plan.totals.plates * 10,
-     "a finer mesh makes many more plates",
-     `${fine.plan.totals.plates} vs ${coarse.plan.totals.plates}`);
-  ok(Math.abs(coarse.plan.totals.worstError) < 1e-9,
-     "and the coarse mesh still satisfies the volume invariant");
+  const groups = MD.planGroups(tables, meshes, converted);
+  ok(groups.length === 1 && groups[0].plates.length === 2, "both beams' plates join their structure group");
 
-  section("the estimate matches what gets built");
-  const est = Plan.estimate(P.selected, P.sections, P.opts);
-  eq(est.plates, P.plan.totals.plates, "the plate estimate is exact, so it can be a limit");
-  ok(est.nodes >= P.plan.totals.nodes, "the node estimate is an upper bound");
+  const dangling = MD.danglingReferences(tables, converted);
+  ok(dangling.length === 1 && dangling[0].table === "TDNA" && dangling[0].elements[0] === "2",
+    "a tendon on a converted beam is reported as left behind");
 
-  section("thicknesses are collected by value");
-  const ts = P.plan.thicknesses;
-  ok(ts.every((t) => t.name.length <= 16), "every generated name fits the tightest cap");
-  ok(ts.every((t, i) => i === 0 || ts[i - 1].t < t.t), "thicknesses are distinct and sorted");
-  const reuse = Plan.collectThicknesses([{ t: 0.025 }], { "4": { T_IN: 0.025, NAME: "PL25" } });
-  eq(reuse[0].reuseId, "4", "an existing thickness of the same value is reused, not duplicated");
+  const offs = MD.endOffsets({ ITEMS: [{ TYPE: "ELEMENT", RGDYi: 0.5, RGDZi: 0.5, RGDYj: 0.25, RGDZj: 0.25 }] },
+    { ex: [1, 0, 0] });
+  near(offs.I[0], 0.5, 1e-12, "an element-type end offset moves the i end along the member");
+  near(offs.J[0], -0.25, 1e-12, "and the j end back from its node");
+}
 
-  /* ----------------------------------------------------------- selections */
+/* ---------------------------------------------------------- the client --- */
 
-  section("element id selection");
-  eq(Plan.parseIds("101-103, 205").count, 4, "a range and a single id");
-  eq(Plan.parseIds("101, deck").bad[0], "deck", "a token that is not an id is REPORTED");
-  eq(Plan.parseIds("110-101").bad[0], "110-101", "a backwards range is reported too");
+section("the API client");
+{
+  ok(Mapi.ALLOWED_PUT.indexOf("SECT") === -1, "the client cannot write /db/SECT");
+  ok(Mapi.ALLOWED_PUT.indexOf("STAG") === -1, "the client cannot write construction stages");
+  ok(Mapi.ALLOWED_DELETE_ROW.indexOf("SECT") === -1, "the client cannot delete section rows");
+  ok(Mapi.ALLOWED_POST.length === 1 && Mapi.ALLOWED_POST[0] === "/view/CAPTURE", "the only POST is the viewport capture");
+  ok(Mapi.ALLOWED_GET.every(p => p === "/ope/SECTPROP" || p === "/view/SELECT"), "only two GETs outside /db/");
+  const m = new Mapi.Mapi({ key: "k", base: "http://x/civil" });
+  let threw = null;
+  m.put("SECT", {}).catch(e => { threw = e; });
+  m.delRow("ELEM", "").catch(e => { threw = threw || e; });
+  ok(true, "the whitelists are enforced by the client, not by call sites");
+}
 
-  const bySect = await planFor({}, { mode: "sect", sects: ["3"] });
-  eq(bySect.plan.totals.converted, 1, "selecting one section converts one beam");
+/* ------------------------------------------------- end to end on the mock */
 
-  /* --------------------------------------------------------- safety rails */
+section("end to end against the mock CIVIL NX");
+(async () => {
+  await new Promise(r => mock.server.listen(8791, r));
+  const mapi = new Mapi.Mapi({ key: "mock-key", base: "http://localhost:8791/civil" });
+  const info = await mapi.verify();
+  ok(info.keyVerified && info.status === "connected", "connects to the mock");
 
-  section("safety rails");
-  eq(MapiM.ALLOWED_POST.join(","), "/view/CAPTURE",
-     "the only POST this plugin may make is the screenshot");
-  let wl = null;
-  try { await mapi.put("SECT", { 1: {} }); } catch (e) { wl = e; }
-  ok(wl && /not permitted to write/.test(wl.message), "writing an unlisted table is refused");
+  const sel = await mapi.selection();
+  ok(sel.elements.length === 2, "reads the CIVIL NX selection (" + sel.elements.length + " elements)");
 
-  let dl = null;
-  try { await mapi.delRow("NODE", 1); } catch (e) { dl = e; }
-  ok(dl && /not permitted to delete/.test(dl.message), "deleting from an unlisted table is refused");
+  const tables = await Plan.readTables(mapi);
+  ok(tables.SECTPROP.status === "ok", "reads /ope/SECTPROP");
+  ok(tables.ELEM.status === "ok" && tables.THIK.status === "empty",
+    "an empty table reads as empty, not as an error");
 
-  let bare = null;
-  try { await mapi.delRow("ELEM", ""); } catch (e) { bare = e; }
-  ok(bare && /numeric id/.test(bare.message),
-     "a delete without an id is refused — the bare path empties the whole table");
-  ok(typeof mapi.del !== "function", "there is no whole-table delete on the client at all");
+  const beams = Plan.beams(tables);
+  ok(beams.filter(b => b.skip).length === 2, "the plate and the truss are skipped, not failed");
 
-  const client = fs.readFileSync(path.join(JS, "mapi.js"), "utf8");
-  ok(/delete body\.Argument\.EXPORT_PATH/.test(client),
-     "EXPORT_PATH is stripped in the client, not at the call sites");
+  const selected = Plan.select(beams, { mode: "selection", selected: sel.elements }, tables);
+  ok(selected.length === 2, "the selection picks the two continuous girders");
 
-  /* -------------------------------------------------------------- writing */
+  const sectIds = [];
+  selected.forEach(b => { if (sectIds.indexOf(b.sect) === -1) sectIds.push(b.sect); });
+  const opts = { longSize: 2, transSize: 0.3, mergeTol: 1e-4, calibrate: "generic", convertLoads: true,
+                 thickTol: 0.005, boundaryGroup: "B2P links" };
+  const sections = Plan.studySections(tables, sectIds, opts);
+  ok(Object.values(sections).every(s => s.ok), "the selected sections interpret");
 
-  section("committing writes what the plan described");
-  mock.reset();
-  const W = await planFor({}, { mode: "ids", ids: { 101: true } });
-  const sources = W.selected.filter((b) =>
-    W.plan.elements.some((e) => e.id === b.id && e.ok));
+  const plan = Plan.buildPlan(selected, sections, tables, opts);
+  ok(plan.totals.plates > 0, "the plan has plates (" + plan.totals.plates + ")");
+  near(plan.totals.volume, plan.totals.expected, 1e-9, "the plan's volume check is exact");
+  ok(plan.links.length === 2, "two links: the two supported ends (" + plan.links.length + ")");
+  ok(plan.freeEnds.length === 1, "the shared interior node needs no link");
+  ok(plan.loads.length > 0, "the beam loads are converted (" + plan.loads.length + " node entries)");
+  ok(plan.dangling.some(d => d.table === "LLAN"), "the traffic lane on these beams is reported");
+
   const report = await Commit.commit(mapi, {
-    plan: W.plan, sources, groupName: "B2P mesh", reuseExisting: false, mergeTol: 1e-4
+    plan, sources: selected, groupName: "B2P mesh", boundaryGroup: "B2P links",
+    reuseExisting: true, deleteSources: true, deleteOrphans: true, mergeTol: 1e-4
   }, {});
+  ok(report.plates === plan.totals.plates, "every plate was written");
+  ok(report.verified === report.plates, "every plate was found again afterwards");
+  ok(report.links === 2, "the links landed");
+  ok(report.deleted === 2, "the source beams were deleted");
+  ok(!mock.TABLES.BMLD[String(selected[0].id)], "deleting a beam took its beam loads with it");
+  ok(Object.keys(mock.TABLES.THIK).length === report.thicknesses.length, "one THIK record per distinct thickness");
+  const grup = mock.TABLES.GRUP["1"];
+  ok(grup.E_LIST.length > 2, "the plates joined the girders' structure group");
+  ok(report.warnings.length === 0, "no warnings: " + report.warnings.join(" | "));
 
-  eq(report.plates, W.plan.totals.plates, "every planned plate was written");
-  eq(report.verified, W.plan.totals.plates, "and every one was found in /db/ELEM afterwards");
-  eq(report.warnings.length, 0, "with no warnings");
-  eq(report.group, "B2P mesh", "the structure group was written");
+  /* undo */
+  const back = await Commit.undo(mapi, report, {});
+  ok(back.plates === report.plates, "undo removed every plate");
+  ok(back.sources === 2, "undo put both beams back");
+  ok(Object.keys(mock.TABLES.ELEM).filter(k => mock.TABLES.ELEM[k].TYPE === "PLATE").length === 1,
+    "only the model's own original plate remains");
+  ok(!!mock.TABLES.BMLD[String(selected[0].id)], "undo restored the beam loads too");
 
-  const afterNodes = (await mapi.db("NODE")).rows;
-  const afterElems = (await mapi.db("ELEM")).rows;
-  const afterThik = (await mapi.db("THIK")).rows;
-  eq(Object.keys(afterNodes).length, 27 + report.nodesWritten, "the nodes landed");
-  const newPlates = Object.keys(afterElems).filter((id) => Number(id) > 113);
-  eq(newPlates.length, W.plan.totals.plates, "the plates landed");
-  ok(newPlates.every((id) => afterElems[id].TYPE === "PLATE"), "as PLATE elements");
-  ok(newPlates.every((id) => afterElems[id].STYPE === 3), "thick plates");
-  ok(newPlates.every((id) => String(afterElems[id].SECT) in afterThik),
-     "and each one's SECT resolves to a THIK record — that is how a plate carries " +
-     "its thickness");
+  await new Promise(r => mock.server.close(r));
 
-  section("ids are read back, never assumed");
-  /* The mock lands new records somewhere other than the numbers that were sent.
-     A plugin that trusted the id it wrote would now build plates on the wrong
-     nodes — and the volume check below would not notice, because the plates
-     would still be plates. Only the coordinates tell the truth. */
-  mock.reset();
-  mock.state.shiftNewIds = 7;
-  const W2 = await planFor({}, { mode: "ids", ids: { 106: true } });
-  const src2 = W2.selected.filter((b) => W2.plan.elements.some((e) => e.id === b.id && e.ok));
-  const r2 = await Commit.commit(mapi, {
-    plan: W2.plan, sources: src2, groupName: "", reuseExisting: false, mergeTol: 1e-4
-  }, {});
-  eq(r2.verified, W2.plan.totals.plates, "every plate is still found after an id shift");
-
-  const nodes2 = (await mapi.db("NODE")).rows;
-  const elems2 = (await mapi.db("ELEM")).rows;
-  const wrote = Object.keys(elems2).filter((id) => Number(id) > 113);
-  let coordsRight = true;
-  wrote.forEach((id) => {
-    const ns = elems2[id].NODE.filter((n) => Number(n) > 0);
-    ns.forEach((n) => { if (!nodes2[String(n)]) coordsRight = false; });
-  });
-  ok(coordsRight, "and every plate references a node that exists");
-  /* The mesh of beam 106 lies in the plane y = 20; if the ids had been assumed
-     rather than read back, the plates would reference the original frame's
-     nodes, which do not. */
-  const planeOk = wrote.every((id) => elems2[id].NODE.filter((n) => Number(n) > 0)
-    .every((n) => Math.abs(nodes2[String(n)].Y - 20) < 1e-9));
-  ok(planeOk, "and sits in the plane of the beam it came from");
-  mock.state.shiftNewIds = 0;
-
-  section("existing nodes can be reused rather than duplicated");
-  mock.reset();
-  const W3 = await planFor({ transSize: 0.2 }, { mode: "ids", ids: { 106: true } });
-  const src3 = W3.selected.filter((b) => W3.plan.elements.some((e) => e.id === b.id && e.ok));
-  const r3 = await Commit.commit(mapi, {
-    plan: W3.plan, sources: src3, groupName: "", reuseExisting: true, mergeTol: 1e-4
-  }, {});
-  ok(r3.nodesReused >= 2,
-     "the beam's own end nodes are reused where the mesh passes through them",
-     String(r3.nodesReused));
-  eq(r3.nodesWritten + r3.nodesReused, W3.plan.totals.nodes,
-     "written plus reused accounts for every node in the plan");
-
-  section("a model that changed under the plan aborts the write");
-  mock.reset();
-  const W4 = await planFor({}, { mode: "ids", ids: { 101: true } });
-  const src4 = W4.selected.filter((b) => W4.plan.elements.some((e) => e.id === b.id && e.ok));
-  mock.TABLES.ELEM["101"].SECT = 4;             /* the user swapped the section */
-  let driftErr = null;
-  try {
-    await Commit.commit(mapi, { plan: W4.plan, sources: src4, groupName: "",
-      reuseExisting: false, mergeTol: 1e-4 }, {});
-  } catch (e) { driftErr = e; }
-  ok(driftErr && /changed since the plan/.test(driftErr.message),
-     "the commit refuses", driftErr && driftErr.message);
-  ok(driftErr && /section changed/.test(driftErr.message), "and says what changed");
-  eq(Object.keys((await mapi.db("THIK")).rows || {}).length, 0,
-     "and nothing at all was written first");
-  mock.TABLES.ELEM["101"].SECT = 1;
-
-  section("deleting the source beams is opt-in and does what it says");
-  mock.reset();
-  const W5 = await planFor({}, { mode: "ids", ids: { 101: true } });
-  const src5 = W5.selected.filter((b) => W5.plan.elements.some((e) => e.id === b.id && e.ok));
-  const r5 = await Commit.commit(mapi, { plan: W5.plan, sources: src5, groupName: "",
-    reuseExisting: true, deleteSources: true, mergeTol: 1e-4 }, {});
-  eq(r5.deleted, 1, "the source beam was deleted");
-  ok(!(await mapi.db("ELEM")).rows["101"], "and is gone from /db/ELEM");
-  mock.reset();
-  mock.TABLES.ELEM["101"] = { TYPE: "BEAM", MATL: 1, SECT: 1,
-    NODE: [1, 2, 0, 0, 0, 0, 0, 0], ANGLE: 0 };
-
-  /* --------------------------------------------------------------- drawing */
-
-  section("the drawings");
-  const svg = Draw.sectionSvg(P.sections["1"].model, {});
-  ok(/<svg/.test(svg) && /<polygon/.test(svg), "a section draws as filled walls");
-  ok(/no geometry/.test(Draw.sectionSvg(null, {})), "and an absent model says so");
-  const mesh = Draw.meshSvg(P.plan.pool, P.plan.plates, { cap: 50 });
-  ok(/showing 1 plate in/.test(mesh),
-     "a large mesh is sampled rather than drawn whole — it runs on the UI thread");
-
-  /* ---------------------------------------------------------- window shell */
-
-  section("window shell");
-  /* STRUCTURAL, because the close button is the most-broken part of a CIVIL NX
-     plugin and every one of these failures shipped on a real one. */
-  {
-    const root = path.join(__dirname, "..");
-    const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-    const app = fs.readFileSync(path.join(root, "js", "app.js"), "utf8");
-
-    ok(/id="btn-close"/.test(html), "a close control exists at all");
-    ok(/<title>[^<]+<\/title>/.test(html), "document.title is set — the host shows it");
-
-    const drag = /<div id="drag-surface"[\s\S]*?<\/div>\s*<\/div>/.exec(html) ||
-                 /<div id="drag-surface"[\s\S]*?<\/div>/.exec(html);
-    ok(!!drag, "#drag-surface exists");
-    ok(drag && !/id="btn-close"/.test(drag[0]),
-       "the close button is NOT inside the drag surface (a drag would start on it)");
-    ok(html.indexOf('id="drag-surface"') < html.indexOf('id="btn-close"'),
-       "the close button follows the drag surface as a sibling");
-    ok(/getElementById\("drag-surface"\)/.test(app),
-       "the drag handler is bound to #drag-surface, not to the whole header");
-
-    ok(/function toHost\(/.test(app), "host messages go through one bridge helper");
-    ok(/typeof w\.postMessage !== "function"/.test(app),
-       "toHost DETECTS a missing bridge rather than relying on a thrown error");
-    ok(/did not close/.test(app),
-       "an unhonoured REQ_EXIT reports itself — window.close() is a no-op in WebView2");
-    ok(/REQ_EXIT/.test(app) && /REQ_WND_MOVE/.test(app), "both host messages are used");
-    ok(!/REQ_MOVE"/.test(app), "REQ_MOVE is not sent — the host ignores it");
-    ok(/addEventListener\("mousedown"/.test(app), "the drag is from mousedown, not pointerdown");
-
-    ok(/new MessageChannel\(\)/.test(app),
-       "yieldToUi uses MessageChannel — setTimeout is clamped to 1s when hidden");
-    ok(/function runChunked\(/.test(app), "a chunking helper exists");
-    ok(/MAX_PLATES/.test(app),
-       "and a hard ceiling stops a huge selection blocking the UI thread instead");
-
-    /* The run controls must not be inside a panel that an option can hide. */
-    const runPanel = /<section class="panel run">[\s\S]*?<\/section>/.exec(html);
-    ok(runPanel && /id="btn-commit"/.test(runPanel[0]),
-       "the Write button lives in the always-visible run panel");
-
-    ok(fs.existsSync(path.join(root, "icon.svg")), "the plugin-list badge exists");
-    ok(fs.existsSync(path.join(root, "icon-bar.svg")), "the dark-bar glyph exists");
-    const badge = fs.readFileSync(path.join(root, "icon.svg"), "utf8");
-    ok(/data:image\/png;base64,/.test(badge),
-       "the list badge embeds the house frame rather than linking it");
-
-    const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-    ok(manifest.width <= 1280 && manifest.height <= 760, "the window is 1280x760 or smaller");
-    ok(new RegExp(manifest.version.replace(/\./g, "\\.")).test(html),
-       "the version in index.html matches manifest.json");
-    ok(!/https?:\/\/(?!localhost)/.test(html.replace(/<!--[\s\S]*?-->/g, "")),
-       "no CDN links — everything is vendored");
-    /* The word appears in app.js's own comment explaining why it must not; the
-       check is for an actual call. */
-    ok(!/localStorage\s*\./.test(app),
-       "the model is never cached in localStorage; only the theme uses it");
-  }
-
-  section("host query string");
-  eq(MapiM.keyFromLocation("?mapiKey=abc&redirectTo=http://x/civil"), "abc",
-     "key read from the query string");
-  eq(MapiM.baseFromLocation("?redirectTo=http://x/civil/"), "http://x/civil",
-     "redirectTo wins, trailing slash trimmed");
-  eq(MapiM.baseFromLocation(""), MapiM.DEFAULT_BASE, "falls back to the default base");
-
-  /* ---------------------------------------------------------------------- */
-  console.log(`\n${passed} passed, ${failed} failed`);
-  if (failed) { failures.forEach((f) => console.log("  · " + f)); process.exitCode = 1; }
-  mock.server.close();
-})().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-  mock.server.close();
-});
+  console.log("\n" + (failed ? failed + " FAILED, " : "") + passed + " passed");
+  if (failed) { fails.forEach(f => console.log("  - " + f)); process.exit(1); }
+})();

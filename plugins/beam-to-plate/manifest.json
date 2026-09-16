@@ -1,8 +1,10 @@
 {
   "short_name": "BeamToPlate",
   "name": "Beam to Plate",
-  "version": "1.0.0",
-  "description": "Convert beam elements into a plate mesh of their cross-section walls, with the wall model checked against the section area the model publishes.",
+  "version": "2.0.0",
+  "description": "Convert beam elements into a plate mesh of their cross-section — any section CIVIL NX gives geometry for — carrying the loads, supports and groups across, and checking every plate model against the properties CIVIL NX publishes.",
+  "author": "MIDAS IT EUROPE - manoj@midasit.com",
+  "developed_with": "MIDAS CIVIL NX 2026",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ],

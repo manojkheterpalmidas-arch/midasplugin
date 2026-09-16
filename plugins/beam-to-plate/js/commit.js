@@ -33,7 +33,24 @@
   var Plan = root.B2PPlan || (typeof require === "function" ? require("./plan.js") : null);
   var Mesh = root.B2PMesh || (typeof require === "function" ? require("./mesh.js") : null);
 
-  var BATCH = 300;
+  /* EVERY REQUEST COSTS ABOUT A SECOND, whatever its size — measured on a live
+     CIVIL NX: 50 rigid links took 50.8 s written one at a time and 0.9 s as one
+     request; 3,000 nodes took 10.9 s in batches of 300 and 1.8 s as one; 15,000
+     nodes in one request took 4.1 s. So each table is built in full first and
+     sent as ONE request. BATCH only splits a truly enormous table. */
+  var BATCH = 20000;
+
+  /** PUT a whole Assign object, split only above BATCH records. */
+  async function putAll(mapi, key, assign, breathe) {
+    var keys = Object.keys(assign);
+    for (var i = 0; i < keys.length; i += BATCH) {
+      if (breathe) await breathe();
+      var part = {};
+      keys.slice(i, i + BATCH).forEach(function (k) { part[k] = assign[k]; });
+      await mapi.put(key, part);
+    }
+    return keys.length;
+  }
 
   function nextId(rows) {
     var max = 0;
@@ -189,18 +206,14 @@
       var hit = existing ? existing.find(poolList[p]) : null;
       if (hit) { poolId[p] = hit; report.nodesReused++; } else queue.push(p);
     }
-    var nodeBefore = idSet(nodeRows), nid = nextId(nodeRows);
-    for (var qi = 0; qi < queue.length; qi += BATCH) {
-      await breathe();
-      var slice = queue.slice(qi, qi + BATCH), nAssign = {};
-      slice.forEach(function (idx) {
-        var xyz = poolList[idx];
-        nAssign[String(nid++)] = { X: xyz[0], Y: xyz[1], Z: xyz[2] };
-      });
-      await mapi.put("NODE", nAssign);
-      report.nodesWritten += slice.length;
-      say("Placing nodes (" + Math.min(qi + BATCH, queue.length) + " of " + queue.length + ")",
-        0.12 + 0.28 * (qi / Math.max(1, queue.length)));
+    var nodeBefore = idSet(nodeRows), nid = nextId(nodeRows), nAssign = {};
+    queue.forEach(function (idx) {
+      var xyz = poolList[idx];
+      nAssign[String(nid++)] = { X: xyz[0], Y: xyz[1], Z: xyz[2] };
+    });
+    if (queue.length) {
+      say("Placing " + queue.length + " nodes", 0.2);
+      report.nodesWritten = await putAll(mapi, "NODE", nAssign, breathe);
     }
     if (queue.length) {
       say("Reading back the node ids", 0.42);
@@ -221,24 +234,17 @@
 
     /* -- 5. plates --------------------------------------------------------- */
     say("Writing plates", 0.48);
-    var elemBefore = idSet(elemRows), eid = nextId(elemRows), wanted = [];
-    for (var pi = 0; pi < plan.plates.length; pi += BATCH) {
-      await breathe();
-      var pslice = plan.plates.slice(pi, pi + BATCH), eAssign = {};
-      pslice.forEach(function (q) {
-        var nodes = q.nodes.map(function (ix) { return Number(poolId[ix]); });
-        var bin = Plan.thicknessFor(plan.thicknesses, q.t);
-        if (!bin || !bin.reuseId) throw new Error("No /db/THIK record for a plate thickness of " + q.t + ".");
-        var rec = { TYPE: "PLATE", MATL: Number(q.matl) || 1, SECT: Number(bin.reuseId),
-                    NODE: nodes, STYPE: 3 };
-        eAssign[String(eid++)] = rec;
-        wanted.push({ key: nodes.slice().sort(numeric).join(","), plate: q });
-      });
-      await mapi.put("ELEM", eAssign);
-      report.plates += pslice.length;
-      say("Writing plates (" + Math.min(pi + BATCH, plan.plates.length) + " of " + plan.plates.length + ")",
-        0.48 + 0.22 * (pi / Math.max(1, plan.plates.length)));
-    }
+    var elemBefore = idSet(elemRows), eid = nextId(elemRows), wanted = [], eAssign = {};
+    plan.plates.forEach(function (q) {
+      var nodes = q.nodes.map(function (ix) { return Number(poolId[ix]); });
+      var bin = Plan.thicknessFor(plan.thicknesses, q.t);
+      if (!bin || !bin.reuseId) throw new Error("No /db/THIK record for a plate thickness of " + q.t + ".");
+      eAssign[String(eid++)] = { TYPE: "PLATE", MATL: Number(q.matl) || 1, SECT: Number(bin.reuseId),
+                                 NODE: nodes, STYPE: 3 };
+      wanted.push({ key: nodes.slice().sort(numeric).join(","), plate: q });
+    });
+    say("Writing " + plan.plates.length + " plates", 0.55);
+    report.plates = await putAll(mapi, "ELEM", eAssign, breathe);
 
     /* -- 6. verify what landed -------------------------------------------- */
     say("Verifying the plates", 0.72);
@@ -273,21 +279,29 @@
       }).concat(plan.ties.map(function (t) {
         return { master: String(poolId[t.master]), slaves: t.slaves.map(function (s) { return Number(poolId[s]); }) };
       }));
-      for (var li = 0; li < all.length; li++) {
-        if (li % 40 === 0) await breathe();
-        var L = all[li];
+      /* All links in ONE request, keyed by master. A master that appears twice
+         (an end link and a tie on the same node) is merged here first. */
+      var rAssign = {}, links = 0, ties = 0;
+      all.forEach(function (L, li) {
         var slaves = L.slaves.filter(function (s) { return s && String(s) !== L.master; });
-        if (!slaves.length) continue;
-        var existingItems = (rigdRows[L.master] && rigdRows[L.master].ITEMS) || [];
-        var itemId = 1 + existingItems.reduce(function (a, it) { return Math.max(a, Number(it.ID) || 0); }, 0);
-        try {
-          await mapi.put("RIGD", makeAssign(L.master, { ITEMS: [{ ID: itemId, GROUP_NAME: bngrName,
-            DOF: 111111, S_NODE: slaves }] }));
+        if (!slaves.length) return;
+        if (!rAssign[L.master]) {
+          var existingItems = (rigdRows[L.master] && rigdRows[L.master].ITEMS) || [];
+          var itemId = 1 + existingItems.reduce(function (a, it) { return Math.max(a, Number(it.ID) || 0); }, 0);
+          rAssign[L.master] = { ITEMS: [{ ID: itemId, GROUP_NAME: bngrName, DOF: 111111, S_NODE: [] }] };
           report.undo.links.push({ master: L.master, before: rigdRows[L.master] || null });
-          if (li < plan.links.length) report.links++; else report.ties += slaves.length;
-        } catch (le) {
-          report.warnings.push("The rigid link at node " + L.master + " could not be written (" + le.message + ").");
         }
+        var list = rAssign[L.master].ITEMS[0].S_NODE;
+        slaves.forEach(function (s) { if (list.indexOf(s) === -1) list.push(s); });
+        if (li < plan.links.length) links++; else ties += slaves.length;
+      });
+      try {
+        await putAll(mapi, "RIGD", rAssign, breathe);
+        report.links = links;
+        report.ties = ties;
+      } catch (le) {
+        report.warnings.push("The rigid links could not be written (" + le.message + "). The plates are " +
+          "in the model but not connected to it — press Undo, or link them in CIVIL NX.");
       }
     }
 
@@ -300,67 +314,61 @@
         var id4 = String(poolId[l.idx]);
         (byNode[id4] || (byNode[id4] = [])).push(l);
       });
-      var nodeKeys = Object.keys(byNode);
-      for (var ni = 0; ni < nodeKeys.length; ni += 100) {
-        await breathe();
-        var assignL = {};
-        nodeKeys.slice(ni, ni + 100).forEach(function (nodeId) {
-          var items = (cnldRows[nodeId] && cnldRows[nodeId].ITEMS) || [];
-          var next = 1 + items.reduce(function (a, it) { return Math.max(a, Number(it.ID) || 0); }, 0);
-          assignL[nodeId] = { ITEMS: byNode[nodeId].map(function (l) {
-            return { ID: next++, LCNAME: l.lcname, GROUP_NAME: l.group,
-                     FX: l.F[0], FY: l.F[1], FZ: l.F[2], MX: 0, MY: 0, MZ: 0 };
-          }) };
-          report.undo.loads.push(nodeId);
-        });
-        await mapi.put("CNLD", assignL);
-        report.loads += Object.keys(assignL).length;
-      }
+      var assignL = {};
+      Object.keys(byNode).forEach(function (nodeId) {
+        var items = (cnldRows[nodeId] && cnldRows[nodeId].ITEMS) || [];
+        var next = 1 + items.reduce(function (a, it) { return Math.max(a, Number(it.ID) || 0); }, 0);
+        assignL[nodeId] = { ITEMS: byNode[nodeId].map(function (l) {
+          return { ID: next++, LCNAME: l.lcname, GROUP_NAME: l.group,
+                   FX: l.F[0], FY: l.F[1], FZ: l.F[2], MX: 0, MY: 0, MZ: 0 };
+        }) };
+        report.undo.loads.push(nodeId);
+      });
+      report.loads = await putAll(mapi, "CNLD", assignL, breathe);
     }
 
     /* -- 9. element temperatures ------------------------------------------ */
     if ((plan.temperatures || []).length) {
       say("Carrying element temperatures across", 0.88);
-      for (var ti = 0; ti < plan.temperatures.length; ti++) {
-        var t2 = plan.temperatures[ti];
-        var assignT = {};
+      var assignT = {};
+      plan.temperatures.forEach(function (t2) {
         t2.plates.forEach(function (p2) { if (p2.elemId) assignT[p2.elemId] = { ITEMS: t2.items }; });
-        if (!Object.keys(assignT).length) continue;
-        try {
-          await mapi.put("ETMP", assignT);
-          report.temperatures += Object.keys(assignT).length;
-        } catch (te) {
-          report.warnings.push("Element temperatures from beam " + t2.source + " could not be carried across (" + te.message + ").");
-        }
+      });
+      try {
+        report.temperatures = await putAll(mapi, "ETMP", assignT, breathe);
+      } catch (te) {
+        report.warnings.push("Element temperatures could not be carried across (" + te.message + ").");
       }
     }
 
     /* -- 10. groups -------------------------------------------------------- */
     say("Adding the plates to their groups", 0.92);
+    /* every group in one request — GRUP writes merge their lists (verified) */
     var grupRows = fresh.GRUP.rows || {};
-    for (var gi = 0; gi < plan.groups.length; gi++) {
-      var g = plan.groups[gi];
-      try {
-        await mapi.put("GRUP", makeAssign(g.id, { NAME: g.name, P_TYPE: 0,
-          N_LIST: g.nodes.map(function (n) { return Number(poolId[n]); }).filter(Boolean),
-          E_LIST: g.plates.map(function (p3) { return Number(p3.elemId); }).filter(Boolean) }));
-        report.groups.push(g.name);
-      } catch (ge) {
-        report.warnings.push("Group \"" + g.name + "\" could not be updated (" + ge.message +
-          "). The plates are in the model but not in that group.");
-      }
-    }
+    var gAssign = {};
+    plan.groups.forEach(function (g) {
+      gAssign[g.id] = { NAME: g.name, P_TYPE: 0,
+        N_LIST: g.nodes.map(function (n) { return Number(poolId[n]); }).filter(Boolean),
+        E_LIST: g.plates.map(function (p3) { return Number(p3.elemId); }).filter(Boolean) };
+    });
     if (ctx.groupName) {
+      var gid = null;
+      Object.keys(grupRows).forEach(function (q2) { if (String(grupRows[q2].NAME) === ctx.groupName) gid = q2; });
+      var allNodes = [];
+      poolId.forEach(function (v) { if (v != null) allNodes.push(Number(v)); });
+      gid = gid || String(nextId(grupRows));
+      var mine = gAssign[gid];
+      gAssign[gid] = { NAME: ctx.groupName, P_TYPE: 0, N_LIST: allNodes.concat(mine ? mine.N_LIST : []),
+                       E_LIST: elemIds.map(Number).concat(mine ? mine.E_LIST : []) };
+    }
+    if (Object.keys(gAssign).length) {
       try {
-        var gid = null;
-        Object.keys(grupRows).forEach(function (q2) { if (String(grupRows[q2].NAME) === ctx.groupName) gid = q2; });
-        var allNodes = [];
-        poolId.forEach(function (v) { if (v != null) allNodes.push(Number(v)); });
-        await mapi.put("GRUP", makeAssign(gid || String(nextId(grupRows)), { NAME: ctx.groupName, P_TYPE: 0,
-          N_LIST: allNodes, E_LIST: elemIds.map(Number) }));
-        report.group = ctx.groupName;
-      } catch (gerr) {
-        report.warnings.push("The structure group could not be written (" + gerr.message + ").");
+        await putAll(mapi, "GRUP", gAssign, breathe);
+        report.groups = plan.groups.map(function (g) { return g.name; });
+        if (ctx.groupName) report.group = ctx.groupName;
+      } catch (ge) {
+        report.warnings.push("The structure groups could not be updated (" + ge.message +
+          "). The plates are in the model but not in their groups.");
       }
     }
 
@@ -418,6 +426,10 @@
       var candidates = Object.create(null);
       ctx.sources.forEach(function (b) { (b.nodeIds || []).forEach(function (n) { candidates[String(n)] = true; }); });
       var orphans = Object.keys(candidates).filter(function (n) { return !referenced[n] && !used[n]; });
+      /* keep their rows: Undo has to put these nodes back BEFORE the beams, or
+         CIVIL NX refuses every beam whose node is missing */
+      report.undo.orphans = {};
+      orphans.forEach(function (n) { if (nodeRows[n]) report.undo.orphans[n] = nodeRows[n]; });
       try {
         var ores = await mapi.delRows("NODE", orphans);
         report.orphansRemoved = ores.deleted;
@@ -451,14 +463,14 @@
       out.plates = pres.deleted;
     } catch (e) { out.warnings.push("Plates: " + e.message); }
     say("Restoring the rigid links", 0.4);
-    for (var l = 0; l < (u.links || []).length; l++) {
-      var rec = u.links[l];
-      try {
-        await mapi.delRow("RIGD", rec.master);
-        if (rec.before) await mapi.put("RIGD", makeAssign(rec.master, rec.before));
-        out.links++;
-      } catch (e2) { out.warnings.push("Rigid link at " + rec.master + ": " + e2.message); }
-    }
+    try {
+      var masters = (u.links || []).map(function (r) { return r.master; });
+      await mapi.delRows("RIGD", masters);
+      var restore = {};
+      (u.links || []).forEach(function (r) { if (r.before) restore[r.master] = r.before; });
+      if (Object.keys(restore).length) await putAll(mapi, "RIGD", restore, breathe);
+      out.links = masters.length;
+    } catch (e2) { out.warnings.push("Rigid links: " + e2.message); }
     say("Removing the converted loads", 0.55);
     try {
       var lres = await mapi.delRows("CNLD", u.loads || []);
@@ -473,18 +485,37 @@
       out.warnings.push("Some nodes are still in use and were kept (" + e4.message + ").");
     }
     say("Putting the beams back", 0.85);
-    for (var s = 0; s < (u.sources || []).length; s++) {
-      var src = u.sources[s];
-      if (!src.elem) continue;
-      try {
-        await mapi.put("ELEM", makeAssign(src.id, src.elem));
-        if (src.bmld) await mapi.put("BMLD", makeAssign(src.id, src.bmld));
-        if (src.etmp) await mapi.put("ETMP", makeAssign(src.id, src.etmp));
-        if (src.frls) await mapi.put("FRLS", makeAssign(src.id, src.frls));
-        if (src.offs) await mapi.put("OFFS", makeAssign(src.id, src.offs));
-        out.sources++;
-      } catch (e5) { out.warnings.push("Beam " + src.id + ": " + e5.message); }
-    }
+    /* one request per table: the beams first, then what hangs off them */
+    var back = { ELEM: {}, BMLD: {}, ETMP: {}, FRLS: {}, OFFS: {} };
+    (u.sources || []).forEach(function (src) {
+      if (!src.elem) return;
+      back.ELEM[src.id] = src.elem;
+      if (src.bmld) back.BMLD[src.id] = src.bmld;
+      if (src.etmp) back.ETMP[src.id] = src.etmp;
+      if (src.frls) back.FRLS[src.id] = src.frls;
+      if (src.offs) back.OFFS[src.id] = src.offs;
+    });
+    try {
+      if (u.orphans && Object.keys(u.orphans).length) await putAll(mapi, "NODE", u.orphans, breathe);
+      out.sources = await putAll(mapi, "ELEM", back.ELEM, breathe);
+      for (var tk of ["BMLD", "ETMP", "FRLS", "OFFS"]) {
+        if (Object.keys(back[tk]).length) await putAll(mapi, tk, back[tk], breathe);
+      }
+    } catch (e5) { out.warnings.push("Putting the beams back: " + e5.message); }
+
+    /* Prove it. A delete that was refused and not noticed looks exactly like one
+       that worked, so the tables are read back and anything left is reported. */
+    say("Checking the model", 0.95);
+    var check = await mapi.dbAll(["ELEM", "NODE"]);
+    var elemNow = check.ELEM.rows || {}, nodeNow = check.NODE.rows || {};
+    out.platesLeft = (u.plates || []).filter(function (id) { return elemNow[id]; }).length;
+    out.nodesLeft = (u.nodes || []).filter(function (id) { return nodeNow[id]; }).length;
+    out.beamsMissing = (u.sources || []).filter(function (s) { return s.elem && !elemNow[s.id]; }).length;
+    out.plates = (u.plates || []).length - out.platesLeft;
+    out.nodes = (u.nodes || []).length - out.nodesLeft;
+    if (out.platesLeft) out.warnings.push(out.platesLeft + " plates are still in the model.");
+    if (out.nodesLeft) out.warnings.push(out.nodesLeft + " of the plugin's nodes are still in the model (in use elsewhere, or not deleted).");
+    if (out.beamsMissing) out.warnings.push(out.beamsMissing + " beams were not put back.");
     say("Done", 1);
     return out;
   }

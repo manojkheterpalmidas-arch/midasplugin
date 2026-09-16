@@ -194,18 +194,31 @@
       throw new Error("A row delete needs numeric ids; refusing to send a list with anything else in it.");
     }
     if (!list.length) return { deleted: 0 };
-    var size = chunk > 0 ? chunk : 100;
+    /* The limit is the URL, not the id count: measured live, a 6,008-character
+       path of 1,000 ids works and a 12,008-character one of 2,000 answers HTTP
+       414 and deletes NOTHING. Chunks are cut by length, well inside that. */
+    var maxPath = chunk > 0 ? chunk : 5000;
+    var chunks = [], cur = [], len = 0;
+    list.forEach(function (id) {
+      if (cur.length && len + id.length + 1 > maxPath) { chunks.push(cur); cur = []; len = 0; }
+      cur.push(id); len += id.length + 1;
+    });
+    if (cur.length) chunks.push(cur);
     var done = 0;
-    for (var i = 0; i < list.length; i += size) {
-      var slice = list.slice(i, i + size);
+    for (var i = 0; i < chunks.length; i++) {
       this.calls++;
-      var path = "/db/" + key + "/" + slice.join(",");
+      var path = "/db/" + key + "/" + chunks[i].join(",");
       var r = await fetch(this.base + path, { method: "DELETE", headers: this.headers() });
+      /* A 414 has no JSON body and no error key — check the status too, or a
+         rejected delete reads as a successful one. */
+      if (r.status !== 200) {
+        throw new MapiError("DELETE /db/" + key + " was refused (HTTP " + r.status + ")", { path: "/db/" + key });
+      }
       var body = await r.json().catch(function () { return null; });
       if (body && body.error) throw new MapiError(errText(body.error), { path: "/db/" + key });
-      done += slice.length;
+      done += chunks[i].length;
     }
-    return { deleted: done };
+    return { deleted: done, calls: chunks.length };
   };
 
   /* ------------------------------------------------------------ other GETs */

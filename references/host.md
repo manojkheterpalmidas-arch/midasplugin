@@ -45,6 +45,12 @@ plugin that has no controls at all. Check existence before correctness:
 - the header is a drag surface,
 - `document.title` is set, because the host displays it.
 
+Give it a **Refresh** button beside the close control as well: with no browser
+chrome there is no F5 to press, and a plain `location.reload()` is all it needs —
+the host's `?mapiKey=&redirectTo=` query string survives the reload, so the
+plugin comes back connected. (A plugin that strips the key from its address must
+carry it over the reload itself; the website launcher does so in sessionStorage.)
+
 `window.close()` is **not** the host mechanism. Keep it only where the template
 keeps it — for the plain-browser development case — never as the primary path.
 

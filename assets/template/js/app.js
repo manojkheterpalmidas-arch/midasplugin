@@ -36,6 +36,11 @@
   function wireHost() {
     /* The host listens for REQ_EXIT and REQ_WND_MOVE. REQ_MOVE is IGNORED — a
        plugin sending it has a title bar that silently does nothing. */
+    /* Refresh = the browser's reload. The host opened the page with
+       ?mapiKey=...&redirectTo=..., and a reload keeps that query string, so the
+       plugin comes back connected. Keep the key in the URL (do not strip it
+       with history.replaceState) or this reload loses it. */
+    $("btn-refresh").addEventListener("click", function () { root.location.reload(); });
     $("btn-close").addEventListener("click", function () {
       if (!toHost("REQ_EXIT")) {
         /* window.close() is a NO-OP in WebView2. On its own this branch is a
